@@ -212,7 +212,7 @@ async function connectToWA() {
   });
   
   //============================== Group Events Handler
-  const { GroupEvents } = require('./lib/groupEvents');
+  const { GroupEvents } = require('./lib/groupevents');
   conn.ev.on('group-participants.update', async (update) => {
     try {
       await GroupEvents(conn, update);
