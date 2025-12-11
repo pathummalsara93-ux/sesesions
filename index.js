@@ -131,11 +131,52 @@ async function connectToWA() {
       console.log('Plugins installed successful ✅');
       console.log('Bot connected to whatsapp ✅');
 
-      let up = `*Hello There SILA-MD User! \ud83d\udc4b\ud83c\udffb* \n\n> Simple , Straight Forward But Loaded With Features \ud83c\udf8a, Meet DARK-SHADOW MD WhatsApp Bot.\n\n *Thanks for using DARK-SHADOW-MD \ud83d\udea9* \n\n> Join WhatsApp Channel :- ⤵️\n \nhttps://whatsapp.com/channel/0029Vb7bwXEEAKWNJgBICJ0w\n\n- *YOUR PREFIX:* = ${prefix}\n\nDont forget to give star to repo ⬇️\n\nhttps://github.com/DARK-SHADOW-NEW/DARK-SHADOW-V3\n\n> © Powered BY DARK-SHADOW \ud83d\udda4`;
-      try {
-        await conn.sendMessage(conn.user.id, { image: { url: `https://files.catbox.moe/jwmx1j.jpg` }, caption: up });
-      } catch (error) {
-        console.error('Error sending welcome message:', error.message);
+     let up = `╔═══════════════════════
+║  *𝚆𝙴𝙻𝙲𝙾𝙼𝙴 𝚃𝙾 𝚂𝙸𝙻𝙰 𝙼𝙳*
+╚═══════════════════════
+
+┌─「 𝙱𝙾𝚃 𝙸𝙽𝙵𝙾 」━━━━━━━━━━━━━━━
+│ 
+│  *👋 Welcome!* Thank you for choosing
+│  *⚡ SILA MD Premium WhatsApp Bot*
+│  *🎯 Simple, Powerful & Feature-Rich*
+│ 
+│  *🔧 Your Prefix:* ${prefix}
+│  *📊 Version:* 3.0.0 Premium
+│  *🏆 Status:* Active & Running
+│ 
+└────────────────────
+
+┌─「 🎯 𝙲𝙾𝙽𝙽𝙴𝙲𝚃 𝚆𝙸𝚃𝙷 𝚄𝚂 」━━━━━━━
+│ 
+│  *📢 Official Channel:*
+│  https://whatsapp.com/channel/0029VbBG4gfISTkCpKxyMH02
+│ 
+│  *⭐ GitHub Repository:*
+│  https://github.com/SILA-TECH/SILA-MD
+│ 
+└────────────────────
+
+*🚀 Get Started:* Use *.menu* to see all commands
+
+*𝙿𝚘𝚠𝚎𝚛𝚎𝚍 𝚋𝚢 𝚂𝚒𝚕𝚊 𝚃𝚎𝚌𝚑*`;
+
+try {
+  await conn.sendMessage(conn.user.id, { 
+    image: { url: `https://files.catbox.moe/jwmx1j.jpg` }, 
+    caption: up,
+    contextInfo: {
+      forwardingScore: 999,
+      isForwarded: true,
+      forwardedNewsletterMessageInfo: {
+        newsletterJid: '120363402325089913@newsletter',
+        newsletterName: 'SILA MD',
+        serverMessageId: 100
+      }
+    }
+  });
+} catch (error) {
+  console.error('Error sending welcome message:', error.message);
       }
     }
   });
@@ -323,6 +364,7 @@ async function connectToWA() {
     if (!isReact && senderNumber !== botNumber) {
       if (config.AUTO_REACT === 'true') {
         const reactions = ['😊', '👍', '😂', '💯', '🔥', '🙏', '🎉', '👏', '😎'];
+        
         const randomReaction = reactions[Math.floor(Math.random() * reactions.length)];
         try {
           m.react(randomReaction);
