@@ -17,16 +17,16 @@ cmd({
 🌟 *LUXALGO BROADCAST SYSTEM* 🌟
 ╚══❖•ೋ° °ೋ•❖══╝
 
-Movie GROUP 🎥
+Whatsap Movie GROUP 🎥
 
-Sinhala Movie
-Tamil Movie
-Telagu Movie
-Cartoon Movie
-Romentic Movie
-18+ Movie 🔞
+> *Sinhala Movie*
+> *Tamil Movie*
+> *Telagu Movie*
+> *Cartoon Movie*
+> *Romentic Movie*
+> *18+ Movie 🔞*
 
-*ඊට අමතරව ඔයා ඉල්ලන ඒවත් request කරාම අපි දෙනවා
+*ඊට අමතරව ඔයා ඉල්ලන ඒවත් request කරාම අපි දෙනවා*
 *අපගේ සයිට් එකෙන් පහසුවෙන් ම එය සිදුකර ගත හැක*
 👇👇👇👇👇
 https://chat.whatsapp.com/EsBTIhmD5Jd8poIDWYbsZ5?mode=hqrc
