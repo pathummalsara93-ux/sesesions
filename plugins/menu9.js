@@ -1,15 +1,11 @@
 const config = require('../config');
-
 const { cmd, commands } = require('../command');
-
 const os = require("os");
-
 const { runtime } = require('../lib/functions');
-
-const axios = require('axios');
+const axios = require('axios')
 
 cmd({
-    pattern: "menu",
+    pattern: "menu9",
     desc: "Horizontal Scrolling Menu",
     category: "menu",
     react: "🧬",
@@ -83,3 +79,4 @@ async (conn, mek, m, { from, quoted, config }) => {
         reply(`Error: ${e.message}`);
     }
 });
+
