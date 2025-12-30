@@ -1,3 +1,4 @@
+const { cmd, commands } = require('../command')
 const axios = require('axios');
 
 const API_KEY = 'prabath_sk_13cc092cb53150d1054698f96d1c19bd6c160301';
