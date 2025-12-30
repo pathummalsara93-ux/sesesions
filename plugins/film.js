@@ -92,8 +92,8 @@ return response.data;
 
 
 cmd({
-  pattern: "film",
-  alias: ["movie"],
+  pattern: "film5",
+  alias: ["movie5"],
   use: ".film <query>",
   desc: "Search and get details of films.",
   category: "search",
