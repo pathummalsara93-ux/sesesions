@@ -1,111 +1,80 @@
-const axios = require("axios");
-const { cmd } = require("../command");
+const axios = require('axios');
 
-let userSession = {};
+// API Configuration
+const API_KEY = 'prabath_sk_13cc092cb53150d1054698f96d1c19bd6c160301';
+const BASE_URL = 'https://api.prabath.top/api/v1/cinesubz';
 
-/* ===============================
-   1️⃣ .movie COMMAND
-================================ */
-cmd({
-  pattern: "movie",
-  desc: "Search and download movies",
-  category: "movie",
-  filename: __filename
-}, async (conn, mek, m, { args, from }) => {
+// 1. Movie Search Function
+async function searchMovie(conn, m, text) {
+    if (!text) return m.reply("කරුණාකර චිත්‍රපටයේ නම ඇතුළත් කරන්න. (උදා: .movie Avatar)");
+    
+    try {
+        const response = await axios.get(`${BASE_URL}/search?q=${text}&apikey=${API_KEY}`);
+        const data = response.data;
 
-  const query = args.join(" ");
-  if (!query) {
-    return conn.sendMessage(from, { text: "❌ Use: .movie avatar" }, { quoted: mek });
-  }
+        if (!data.status || data.results.length === 0) return m.reply("කිසිදු ප්‍රතිඵලයක් හමු නොවීය.");
 
-  const res = await axios.get(
-    `https://api.prabath.top/api/v1/cinesubz/search?apikey=prabath_sk_13cc092cb53150d1054698f96d1c19bd6c160301&query=${encodeURIComponent(query)}`
-  );
+        let msg = `🔍 *Search Results for:* ${text}\n\n`;
+        data.results.map((v, index) => {
+            msg += `*${index + 1}.* ${v.title}\n🔗 URL: ${v.url}\n\n`;
+        });
+        msg += `එම ලැයිස්තුවෙන් අදාළ අංකය හෝ URL එක ලබාදී විස්තර ලබාගන්න.`;
+        
+        return m.reply(msg);
+    } catch (e) {
+        console.error(e);
+        m.reply("API එකේ දෝෂයක් පවතී.");
+    }
+}
 
-  const movies = res.data.result;
-  if (!movies || movies.length === 0)
-    return conn.sendMessage(from, { text: "❌ No movies found!" }, { quoted: mek });
+// 2. Get Details & Qualities
+async function getMovieDetails(conn, m, movieUrl) {
+    try {
+        const response = await axios.get(`${BASE_URL}/movie?url=${movieUrl}&apikey=${API_KEY}`);
+        const data = response.data;
 
-  userSession[from] = {
-    step: "select_movie",
-    movies
-  };
+        if (!data.status) return m.reply("විස්තර ලබාගැනීමට නොහැකි විය.");
 
-  let msg = "🎬 *Search Results*\n\n";
-  movies.forEach((m, i) => {
-    msg += `${i + 1}. ${m.title} (${m.year})\n`;
-  });
+        let details = `🎬 *${data.title}*\n\n`;
+        details += `⭐ Rating: ${data.rating}\n`;
+        details += `📅 Release: ${data.date}\n`;
+        details += `🎭 Cast: ${data.cast.join(', ')}\n\n`;
+        details += `*Download Qualities:*\n`;
 
-  msg += "\nReply with the number.";
-  return conn.sendMessage(from, { text: msg }, { quoted: mek });
-});
+        data.dl_links.forEach((dl, i) => {
+            details += `*${i + 1}.* ${dl.quality} (${dl.size})\n`;
+        });
 
+        // චිත්‍රපටයේ Poster එක සමඟ විස්තර යැවීම
+        await conn.sendMessage(m.chat, { 
+            image: { url: data.image }, 
+            caption: details + `\nඅවශ්‍ය Quality එකට අදාළ අංකය හෝ Link එක Reply කරන්න.` 
+        }, { quoted: m });
 
-/* ===============================
-   2️⃣ REPLY HANDLER (IMPORTANT)
-================================ */
-cmd({
-  on: "text"
-}, async (conn, mek, m, { body, from }) => {
+    } catch (e) {
+        m.reply("Details ලබාගැනීමේදී දෝෂයක් සිදුවිය.");
+    }
+}
 
-  // ⛔ ignore commands like .movie
-  if (body.startsWith(".")) return;
+// 3. Download & Send File (MKV)
+async function downloadAndSend(conn, m, qualityUrl) {
+    try {
+        m.reply("ඔබේ ගොනුව සූදානම් කරමින් පවතී, කරුණාකර රැඳී සිටින්න... ⏳");
+        
+        const response = await axios.get(`${BASE_URL}/download?url=${qualityUrl}&apikey=${API_KEY}`);
+        const data = response.data;
 
-  if (!userSession[from]) return;
+        if (!data.status) return m.reply("Download link එක සකස් කිරීමට නොහැකි විය.");
 
-  const session = userSession[from];
-  const text = body.trim();
+        // Direct File එක යැවීම
+        await conn.sendMessage(m.chat, {
+            document: { url: data.download_url },
+            mimetype: 'video/x-matroska',
+            fileName: `${data.filename}.mkv`,
+            caption: `✅ *Downloaded:* ${data.filename}`
+        }, { quoted: m });
 
-  /* ---- STEP 1: select movie ---- */
-  if (session.step === "select_movie") {
-    const index = parseInt(text) - 1;
-    if (!session.movies[index])
-      return conn.sendMessage(from, { text: "❌ Invalid number" }, { quoted: mek });
-
-    const movie = session.movies[index];
-    session.step = "select_quality";
-
-    const res = await axios.get(
-      `https://api.prabath.top/api/v1/cinesubz/movie?apikey=prabath_sk_13cc092cb53150d1054698f96d1c19bd6c160301&url=${encodeURIComponent(movie.url)}`
-    );
-
-    const d = res.data.result;
-
-    let msg = `🎥 *${d.title}*\n\n`;
-    msg += `📅 Year: ${d.year}\n`;
-    msg += `⭐ Rating: ${d.rating}\n`;
-    msg += `🎭 Cast: ${d.cast.join(", ")}\n\n`;
-    msg += `Select quality:\n`;
-
-    d.quality.forEach((q, i) => {
-      msg += `${i + 1}. ${q.label} (${q.size})\n`;
-    });
-
-    session.qualities = d.quality;
-    return conn.sendMessage(from, { text: msg }, { quoted: mek });
-  }
-
-  /* ---- STEP 2: download ---- */
-  if (session.step === "select_quality") {
-    const index = parseInt(text) - 1;
-    if (!session.qualities[index])
-      return conn.sendMessage(from, { text: "❌ Invalid option" }, { quoted: mek });
-
-    const q = session.qualities[index];
-
-    const res = await axios.get(
-      `https://api.prabath.top/api/v1/cinesubz/download?apikey=prabath_sk_13cc092cb53150d1054698f96d1c19bd6c160301&url=${encodeURIComponent(q.url)}`
-    );
-
-    const file = res.data.result;
-
-    await conn.sendMessage(from, {
-      document: { url: file.url },
-      mimetype: "video/x-matroska",
-      fileName: file.filename,
-      caption: `🎬 ${file.filename}\n📦 ${file.size}`
-    });
-
-    delete userSession[from];
-  }
-});
+    } catch (e) {
+        m.reply("File එක යැවීමේදී දෝෂයක් සිදුවිය. (ගොනුව විශාල වැඩි විය හැක)");
+    }
+}
