@@ -5,78 +5,53 @@ const axios = require('axios');
 // Baileys එකෙන් prepareWAMessageMedia import කිරීම
 const { prepareWAMessageMedia, generateWAMessageFromContent, proto } = require('@whiskeysockets/baileys');
 
-
 cmd({
     pattern: "menu9",
-    desc: "Horizontal Scrolling Menu (No Image)",
+    desc: "Horizontal Scrolling Menu (Fixed Structure)",
     category: "menu",
     react: "🧬",
     filename: __filename
 },  
-async (conn, mek, m, { from, quoted, pushname, reply }) => {
+async (conn, mek, m, { from, quoted, pushname }) => {
     try {
-        const cards = [
-            {
-                body: { text: "🤖 *AI & OTHER COMMANDS*\nExplore Smart AI & Utility tools like GPT, News and more." },
-                header: { title: "DARK SHADOW - AI", hasVideo: false },
-                nativeFlowMessage: {
-                    buttons: [
-                        { name: "quick_reply", buttonParamsJson: '{"display_text":"AI MENU","id":".aimenu"}' },
-                        { name: "quick_reply", buttonParamsJson: '{"display_text":"OTHER MENU","id":".othermenu"}' }
-                    ]
-                }
-            },
-            {
-                body: { text: "📥 *DOWNLOAD COMMANDS*\nDownload FB, YT, TikTok and Anime content easily." },
-                header: { title: "DARK SHADOW - DOWNLOAD", hasVideo: false },
-                nativeFlowMessage: {
-                    buttons: [
-                        { name: "quick_reply", buttonParamsJson: '{"display_text":"DOWNLOAD MENU","id":".dlmenu"}' },
-                        { name: "quick_reply", buttonParamsJson: '{"display_text":"ANIME MENU","id":".animemenu"}' }
-                    ]
-                }
-            },
-            {
-                body: { text: "⚙️ *GROUP & OWNER*\nAdmin tools for managing groups and bot owner settings." },
-                header: { title: "DARK SHADOW - ADMIN", hasVideo: false },
-                nativeFlowMessage: {
-                    buttons: [
-                        { name: "quick_reply", buttonParamsJson: '{"display_text":"GROUP MENU","id":".groupmenu"}' },
-                        { name: "quick_reply", buttonParamsJson: '{"display_text":"OWNER MENU","id":".ownermenu"}' }
-                    ]
-                }
-            },
-            {
-                body: { text: "🎭 *FUN & CONVERT*\nTransform photos to stickers and enjoy funny commands." },
-                header: { title: "DARK SHADOW - FUN", hasVideo: false },
-                nativeFlowMessage: {
-                    buttons: [
-                        { name: "quick_reply", buttonParamsJson: '{"display_text":"FUN MENU","id":".funmenu"}' },
-                        { name: "quick_reply", buttonParamsJson: '{"display_text":"CONVERT MENU","id":".convertmenu"}' }
-                    ]
-                }
-            }
-        ];
-
         const message = {
-            interactiveMessage: {
-                header: { title: `👋 *HELLO ${pushname.toUpperCase()}*`, hasVideo: false },
-                body: { text: "Welcome to DARK SHADOW MD. Please *Swipe Right* to browse our command categories and click buttons to select." },
-                footer: { text: "© 2024 DARK SHADOW MD" },
-                carouselMessage: {
-                    cards: cards
+            viewOnceMessage: {
+                message: {
+                    interactiveMessage: {
+                        body: { text: `👋 Hello ${pushname}\nSelect a category below:` },
+                        footer: { text: "DARK SHADOW MD" },
+                        header: { title: "DARK SHADOW MENU", hasVideo: false },
+                        carouselMessage: {
+                            cards: [
+                                {
+                                    body: { text: "Explore AI & Utility commands." },
+                                    nativeFlowMessage: {
+                                        buttons: [{
+                                            name: "quick_reply",
+                                            buttonParamsJson: '{"display_text":"AI MENU","id":".aimenu"}'
+                                        }]
+                                    }
+                                },
+                                {
+                                    body: { text: "Download FB, YT, TikTok and more." },
+                                    nativeFlowMessage: {
+                                        buttons: [{
+                                            name: "quick_reply",
+                                            buttonParamsJson: '{"display_text":"DOWNLOAD MENU","id":".dlmenu"}'
+                                        }]
+                                    }
+                                }
+                            ]
+                        }
+                    }
                 }
             }
         };
 
-        // වැදගත්: viewOnceMessage එක ඇතුළේ යැවීමෙන් සාර්ථකව මැසේජ් එක ලැබෙනු ඇත.
-        await conn.sendMessage(from, { 
-            viewOnceMessage: { message: message } 
-        }, { quoted: mek });
+        // මෙහිදී Baileys internal functions මගින් generate කිරීම මගහැර කෙලින්ම යවමු
+        await conn.relayMessage(from, message, { messageId: mek.key.id });
 
     } catch (e) {
         console.log("Carousel Error:", e);
-        // reply argument එක තිබේ නම් පමණක් මෙය ක්‍රියාත්මක වේ
-        if(reply) reply(`Error: ${e.message}`);
     }
 });
