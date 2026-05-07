@@ -41,6 +41,7 @@
     "path": "^0.12.7",
     "vm": "^0.1.0",
     "adm-zip": "^0.5.16",
+    "unzipper": "^0.12.3",
     "cheerio": "^1.0.0-rc.12",
     "ruhend-scraper" : "8.0.3",
     "qrcode-terminal": "^0.12.0",
