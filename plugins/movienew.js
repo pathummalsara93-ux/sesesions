@@ -69,7 +69,6 @@ cmd({
             const ctx = upmsg.message.extendedTextMessage?.contextInfo;
             if (ctx?.stanzaId !== searchMsgId) return;
 
-            // Remove this handler immediately
             conn.ev.off("messages.upsert", searchHandler);
 
             const num = parseInt(body);
@@ -94,13 +93,8 @@ cmd({
                 return;
             }
 
-            // 🖼️ DETAILS CARD (image + caption) with description
+            // 🖼️ DETAILS CARD – cast comes before description
             let cap = `☘️ *${movie.maintitle || 'N/A'}*\n\n`;
-            
-            // Add description if available
-            if (movie.description) {
-                cap += `_${movie.description}_\n\n`;
-            }
             
             if (movie.imdbRating) cap += `⭐ *IMDb:* ${movie.imdbRating}\n`;
             if (movie.dateCreated) cap += `📅 *Release:* ${movie.dateCreated}\n`;
@@ -109,6 +103,9 @@ cmd({
             if (movie.genres && movie.genres.length) cap += `🎭 *Genres:* ${movie.genres.join(', ')}\n`;
             if (movie.director) cap += `👨🏻‍💼 *Director:* ${movie.director}\n`;
             if (movie.cast) cap += `🕵️‍♂️ *Cast:* ${movie.cast}\n`;
+            // Description now appears AFTER cast
+            if (movie.description) cap += `\n📖 *Description:*\n_${movie.description}_\n`;
+            
             cap += footer;
 
             await conn.sendMessage(from, {
@@ -116,7 +113,7 @@ cmd({
                 caption: cap
             }, { quoted: upmsg });
 
-            // 📥 QUALITY SELECTION MESSAGE (separate)
+            // 📥 QUALITY SELECTION MESSAGE
             let qualityMsg = `📥 *Select Quality to Download:*\n\n`;
             links.forEach((d, i) => {
                 qualityMsg += `*${i + 1}* ☛ ${d.quality} (${d.size})\n`;
@@ -158,15 +155,15 @@ cmd({
                     const finalUrl = dlRes?.data?.data?.data?.link;
                     if (!finalUrl) throw new Error("No link");
 
-                    // FIXED: Correct caption template string
-                    const downloadCaption = `${movie.maintitle}\n*${target.quality}*\n*${target.size}*${footer}`;
-                    
+                    // Document caption: *Title* [*Quality*] [*Size*] + footer
+                    const docCaption = `*${movie.maintitle}* [*${target.quality}*] [*${target.size}*]${footer}`;
+
                     await conn.sendMessage(from, {
                         document: { url: finalUrl },
                         mimetype: "video/mp4",
                         fileName: `${movie.maintitle}_${target.quality}.mp4`,
                         jpegThumbnail: await getThumbnailBuffer(movie.imageUrl),
-                        caption: downloadCaption
+                        caption: docCaption
                     }, { quoted: dlMsg });
                 } catch (err) {
                     console.error(err);
