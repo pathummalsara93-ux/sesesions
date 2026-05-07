@@ -6,7 +6,7 @@ const BASE_URL = 'https://api.prabath.top/api/v1/cinesubz';
 
 // 1. Movie Search Command
 cmd({
-    pattern: "movie",
+    pattern: "movie7",
     alias: ["search"],
     desc: "Search movies from Cinesubz",
     category: "download",
