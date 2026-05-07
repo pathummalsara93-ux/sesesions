@@ -93,18 +93,18 @@ cmd({
                 return;
             }
 
-            // 🖼️ DETAILS CARD – cast comes before description
-            let cap = `☘️ *${movie.maintitle || 'N/A'}*\n\n`;
+            // 🖼️ DETAILS CARD – all text bold, colon replaced with ➟
+            let cap = `*☘️ ${movie.maintitle || 'N/A'}*\n\n`;
             
-            if (movie.imdbRating) cap += `⭐ *IMDb:* ${movie.imdbRating}\n`;
-            if (movie.dateCreated) cap += `📅 *Release:* ${movie.dateCreated}\n`;
-            if (movie.country) cap += `🌎 *Country:* ${movie.country}\n`;
-            if (movie.runtime) cap += `⏱️ *Duration:* ${movie.runtime}\n`;
-            if (movie.genres && movie.genres.length) cap += `🎭 *Genres:* ${movie.genres.join(', ')}\n`;
-            if (movie.director) cap += `👨🏻‍💼 *Director:* ${movie.director}\n`;
-            if (movie.cast) cap += `🕵️‍♂️ *Cast:* ${movie.cast}\n`;
-            // Description now appears AFTER cast
-            if (movie.description) cap += `\n📖 *Description:*\n_${movie.description}_\n`;
+            if (movie.imdbRating) cap += `*⭐ IMDb* ➟ *${movie.imdbRating}*\n`;
+            if (movie.dateCreated) cap += `*📅 Release* ➟ *${movie.dateCreated}*\n`;
+            if (movie.country) cap += `*🌎 Country* ➟ *${movie.country}*\n`;
+            if (movie.runtime) cap += `*⏱️ Duration* ➟ *${movie.runtime}*\n`;
+            if (movie.genres && movie.genres.length) cap += `*🎭 Genres* ➟ *${movie.genres.join(', ')}*\n`;
+            if (movie.director) cap += `*👨🏻‍💼 Director* ➟ *${movie.director}*\n`;
+            if (movie.cast) cap += `*🕵️‍♂️ Cast* ➟ *${movie.cast}*\n`;
+            // Description after cast, also bold
+            if (movie.description) cap += `\n*📖 Description:*\n*${movie.description}*\n`;
             
             cap += footer;
 
