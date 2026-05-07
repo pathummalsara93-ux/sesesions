@@ -1,91 +1,109 @@
 const { cmd } = require('../command');
+const fs = require('fs');
+const path = require('path');
 
 cmd({
     pattern: "forward",
     alias: ["fw"],
-    desc: "Forward a replied message (image, document, video, text) to a given JID.\nUsage: reply to a message and send .forward <jid>",
+    desc: "Forward a replied message (image, video, document, sticker, audio, text) to any JID.\nUsage: reply to a message and type .forward <jid>",
     react: "📤",
     category: "utility",
     filename: __filename,
 }, async (conn, mek, m, { from, quoted, reply, args, isOwner }) => {
     try {
-        // Only owner can use this for safety
         if (!isOwner) {
             return reply("❌ Only the bot owner can use this command.");
         }
 
-        const targetJidArg = args.join(" ").trim();
-        if (!targetJidArg) {
-            return reply("❌ Please provide a JID (e.g., `94771234567` or `1234567890@g.us`).\nExample: `.forward 94771234567`");
+        let targetJid = args.join(" ").trim();
+        if (!targetJid) {
+            return reply("❌ Please provide a JID.\nExample: `.forward 94771234567` or `.forward 1234567890@g.us`");
         }
 
-        // Normalize JID: if it's a number without '@', add @s.whatsapp.net
-        let targetJid = targetJidArg;
+        // Normalize JID
         if (!targetJid.includes('@') && !targetJid.includes(':')) {
-            // Assume it's a phone number
-            targetJid = `${targetJidArg.replace(/[^0-9]/g, '')}@s.whatsapp.net`;
+            targetJid = `${targetJid.replace(/[^0-9]/g, '')}@s.whatsapp.net`;
         }
 
-        // Check if there is a quoted (replied) message
         if (!quoted) {
-            return reply("❌ You need to reply to the message you want to forward.");
+            return reply("❌ Reply to the message you want to forward.");
         }
 
-        // Extract the quoted message
+        // Get the message key and type
         const quotedMsg = quoted;
-        const msgType = Object.keys(quotedMsg).find(key => 
-            ['imageMessage', 'videoMessage', 'documentMessage', 'audioMessage', 'stickerMessage', 'conversation', 'extendedTextMessage'].includes(key)
+        const msgKey = quotedMsg.key;
+        const message = quotedMsg.message;
+
+        if (!message) {
+            return reply("❌ Could not read the quoted message.");
+        }
+
+        // Determine message type
+        const type = Object.keys(message).find(key => 
+            ['conversation', 'extendedTextMessage', 'imageMessage', 'videoMessage', 
+             'documentMessage', 'audioMessage', 'stickerMessage'].includes(key)
         );
 
-        if (!msgType) {
-            return reply("❌ Unsupported message type to forward.");
-        }
-
-        // Prepare message to send
-        let forwardContent = {};
-        
-        if (msgType === 'conversation') {
-            forwardContent = { text: quotedMsg.conversation };
-        } else if (msgType === 'extendedTextMessage') {
-            forwardContent = { text: quotedMsg.extendedTextMessage.text };
-        } else if (msgType === 'imageMessage') {
-            forwardContent = {
-                image: { url: await conn.downloadMediaMessage(quotedMsg) },
-                caption: quotedMsg.imageMessage.caption || '',
-                mimetype: quotedMsg.imageMessage.mimetype
-            };
-        } else if (msgType === 'videoMessage') {
-            forwardContent = {
-                video: { url: await conn.downloadMediaMessage(quotedMsg) },
-                caption: quotedMsg.videoMessage.caption || '',
-                mimetype: quotedMsg.videoMessage.mimetype
-            };
-        } else if (msgType === 'documentMessage') {
-            forwardContent = {
-                document: { url: await conn.downloadMediaMessage(quotedMsg) },
-                fileName: quotedMsg.documentMessage.fileName,
-                mimetype: quotedMsg.documentMessage.mimetype,
-                caption: quotedMsg.documentMessage.caption || ''
-            };
-        } else if (msgType === 'audioMessage') {
-            forwardContent = {
-                audio: { url: await conn.downloadMediaMessage(quotedMsg) },
-                mimetype: quotedMsg.audioMessage.mimetype,
-                ptt: quotedMsg.audioMessage.ptt || false
-            };
-        } else if (msgType === 'stickerMessage') {
-            forwardContent = {
-                sticker: { url: await conn.downloadMediaMessage(quotedMsg) }
-            };
-        } else {
+        if (!type) {
             return reply("❌ Unsupported message type.");
         }
 
-        // Send to target JID
-        await conn.sendMessage(targetJid, forwardContent);
-        await reply(`✅ Message forwarded successfully to \`${targetJid}\``);
+        let sendContent = {};
+
+        // Handle text messages
+        if (type === 'conversation') {
+            sendContent = { text: message.conversation };
+        } 
+        else if (type === 'extendedTextMessage') {
+            sendContent = { text: message.extendedTextMessage.text };
+        }
+        // Handle media messages by downloading and re-uploading
+        else if (['imageMessage', 'videoMessage', 'documentMessage', 'audioMessage', 'stickerMessage'].includes(type)) {
+            const mediaMsg = message[type];
+            const stream = await conn.downloadMediaMessage(quotedMsg);
+            if (!stream) {
+                return reply("❌ Failed to download media.");
+            }
+
+            // For sticker, audio, document, etc.
+            if (type === 'stickerMessage') {
+                sendContent = { sticker: stream };
+            } 
+            else if (type === 'audioMessage') {
+                sendContent = {
+                    audio: stream,
+                    mimetype: mediaMsg.mimetype,
+                    ptt: mediaMsg.ptt || false
+                };
+            }
+            else if (type === 'documentMessage') {
+                sendContent = {
+                    document: stream,
+                    fileName: mediaMsg.fileName || 'document',
+                    mimetype: mediaMsg.mimetype,
+                    caption: mediaMsg.caption || ''
+                };
+            }
+            else if (type === 'imageMessage') {
+                sendContent = {
+                    image: stream,
+                    caption: mediaMsg.caption || '',
+                    mimetype: mediaMsg.mimetype
+                };
+            }
+            else if (type === 'videoMessage') {
+                sendContent = {
+                    video: stream,
+                    caption: mediaMsg.caption || '',
+                    mimetype: mediaMsg.mimetype
+                };
+            }
+        }
+
+        await conn.sendMessage(targetJid, sendContent);
+        await reply(`✅ Message forwarded to \`${targetJid}\``);
     } catch (e) {
-        console.error("Forward error:", e);
-        reply(`❌ Failed to forward: ${e.message}\nMake sure the JID is valid and the bot can send messages to that target.`);
+        console.error(e);
+        reply(`❌ Failed: ${e.message}`);
     }
 });
