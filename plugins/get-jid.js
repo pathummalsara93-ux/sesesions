@@ -1,61 +1,29 @@
 const { cmd } = require('../command');
 
 cmd({
-    pattern: "jid1",
-    desc: "Get the JID of the user or group.",
+    pattern: "jid",
+    alias: ["jid1", "jid2"],
+    desc: "Get both group JID and user JID (if in group) or just user JID (if private).",
     react: "📍",
     category: "group",
     filename: __filename,
-}, async (conn, mek, m, { from, quoted, body, isCmd, command, args, q, isGroup, sender, senderNumber, botNumber2, botNumber, pushname, isMe, isOwner, groupMetadata, groupName, participants, groupAdmins, isBotAdmins, isAdmins, reply }) => {
+}, async (conn, mek, m, { from, isGroup, sender, isOwner, reply }) => {
     try {
-        // Check if the user has the necessary permissions (Owner or Admin)
+        // Permission check
         if (!isGroup && !isOwner) {
-            return reply("⚠️ Only the bot owner or group admins can use this command.");
+            return reply("⚠️ Only the bot owner can use this command in private chat.");
         }
-
-        // If it's a group, reply with the group JID
         if (isGroup) {
-            return reply(`Group JID: *${from}@g.us*`);
+            // Optionally, check if user is admin or owner (you can uncomment if needed)
+            // if (!isAdmins && !isOwner) return reply("⚠️ Only group admins or owner can use this.");
+            
+            // Send both JIDs on separate lines
+            const bothJids = `Group: ${from}@g.us\nUser: ${sender}@s.whatsapp.net`;
+            return reply(bothJids);
+        } else {
+            // Private chat – only user JID
+            return reply(`User: ${sender}@s.whatsapp.net`);
         }
-
-        // If it's a personal chat, reply with the user's JID
-        if (!isGroup) {
-            return reply(`User JID: *${sender}@s.whatsapp.net*`);
-        }
-
-    } catch (e) {
-        console.error("Error:", e);
-        reply(`❌ An error occurred: ${e.message}`);
-    }
-});
-
-
-// jid2
-
-cmd({
-    pattern: "jid2",
-    desc: "Get the JID of the user or group.",
-    react: "📍",
-    category: "group",
-    filename: __filename,
-}, async (conn, mek, m, { from, quoted, body, isCmd, command, args, q, isGroup, sender, senderNumber, botNumber2, botNumber, pushname, isMe, isOwner, groupMetadata, groupName, participants, groupAdmins, isBotAdmins, isAdmins, reply }) => {
-    try {
-        // Ensure the command is being used in a group or personal chat and the user has necessary permissions
-        if (!isGroup && !isOwner) {
-            return reply("⚠️ Only the bot owner or group admins can use this command.");
-        }
-
-        // If the message is from a group
-        if (isGroup) {
-            // Respond with the group JID
-            return reply(`Group JID: *${from}@g.us*`);
-        }
-
-        // If it's a personal chat, respond with the user's JID
-        if (!isGroup) {
-            return reply(`User JID: *${sender}@s.whatsapp.net*`);
-        }
-
     } catch (e) {
         console.error("Error:", e);
         reply(`❌ An error occurred: ${e.message}`);
