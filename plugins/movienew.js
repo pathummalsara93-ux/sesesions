@@ -6,7 +6,7 @@ const sharp = require('sharp');
 const userDownloads = new Map();
 
 cmd({
-    pattern: "sinhalasub",
+    pattern: "movie",
     alias: ["ssub", "sinhalasubtitle"],
     desc: "Download Sinhala subtitled movies with details card",
     category: "download",
@@ -45,13 +45,19 @@ cmd({
             return;
         }
 
-        let list = `🎬 *SINHALASUB SEARCH*\n\n🔎 ${query.toUpperCase()}\n\n`;
-        results.slice(0, 8).forEach((v, i) => {
-            list += `*${i + 1}* ☛ ${v.title.split("|")[0].trim()}\n`;
+        // Build the search list with the new formatting
+        let list = `〽️ *SINHALASUB SEARCH*\n\n🔎 ${query.toUpperCase()}\n\n`;
+        results.forEach((v, i) => {
+            list += `☣️${i + 1}❭❭⚬ ${v.title.split("|")[0].trim()}\n`;
         });
         list += `\nReply with number${footer}`;
 
-        const sent = await conn.sendMessage(from, { text: list }, { quoted: mek });
+        // Send the search results as an image with the list as caption
+        const searchImageUrl = "https://files.catbox.moe/knn0ft.jpg"; // Your provided image URL
+        const sent = await conn.sendMessage(from, {
+            image: { url: searchImageUrl },
+            caption: list
+        }, { quoted: mek });
         const searchMsgId = sent.key.id;
 
         // 🔁 Search selection handler
@@ -88,13 +94,19 @@ cmd({
                 return;
             }
 
-            // 🖼️ DETAILS CARD (image + caption)
-            let cap = `🎬 *${movie.maintitle || 'N/A'}*\n\n`;
+            // 🖼️ DETAILS CARD (image + caption) with description
+            let cap = `☘️ *${movie.maintitle || 'N/A'}*\n\n`;
+            
+            // Add description if available
+            if (movie.description) {
+                cap += `_${movie.description}_\n\n`;
+            }
+            
             if (movie.imdbRating) cap += `⭐ *IMDb:* ${movie.imdbRating}\n`;
             if (movie.dateCreated) cap += `📅 *Release:* ${movie.dateCreated}\n`;
             if (movie.country) cap += `🌎 *Country:* ${movie.country}\n`;
-            if (movie.duration) cap += `⏱️ *Duration:* ${movie.duration}\n`;
-            if (movie.genre) cap += `🎭 *Genres:* ${movie.genre}\n`;
+            if (movie.runtime) cap += `⏱️ *Duration:* ${movie.runtime}\n`;
+            if (movie.genres && movie.genres.length) cap += `🎭 *Genres:* ${movie.genres.join(', ')}\n`;
             if (movie.director) cap += `👨🏻‍💼 *Director:* ${movie.director}\n`;
             if (movie.cast) cap += `🕵️‍♂️ *Cast:* ${movie.cast}\n`;
             cap += footer;
@@ -138,7 +150,7 @@ cmd({
                 }
 
                 userDownloads.set(from, true);
-                await conn.sendMessage(from, { react: { text: "📥", key: dlMsg.key } });
+                await conn.sendMessage(from, { react: { text: "✔️", key: dlMsg.key } });
 
                 try {
                     const dlApi = `https://vajira-mv-apikeys.netlify.app/api/sinhalasubs/download?url=${encodeURIComponent(target.link)}&apikey=vajiraofficial`;
@@ -151,7 +163,7 @@ cmd({
                         mimetype: "video/mp4",
                         fileName: `${movie.maintitle}_${target.quality}.mp4`,
                         jpegThumbnail: await getThumbnailBuffer(movie.imageUrl),
-                        caption: `*🎬 ${movie.maintitle}*\n❨ ${target.quality}❩\n❨ ${target.size}❩${footer}`
+                        caption: `${movie.maintitle}\n*`[ ${target.quality} ]`*\n*`[ ${target.size}]`*${footer}`
                     }, { quoted: dlMsg });
                 } catch (err) {
                     console.error(err);
