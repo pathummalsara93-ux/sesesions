@@ -18,7 +18,7 @@ async (conn, mek, m, {
     try {
 
         if (!isOwner) {
-            return reply("❌ Owner only command");
+            return reply("❌ Only owner can use this command");
         }
 
         let jid = args[0];
@@ -27,28 +27,37 @@ async (conn, mek, m, {
             return reply("❌ Example:\n.forward 94771234567");
         }
 
-        // convert number -> jid
+        // Convert number -> WhatsApp JID
         if (!jid.includes("@")) {
             jid = jid.replace(/[^0-9]/g, "") + "@s.whatsapp.net";
         }
 
-        // replied message
+        // Replied message
         const quoted = m.quoted;
 
         if (!quoted) {
             return reply("❌ Reply to a message or media");
         }
 
-        // detect type
-        const type = quoted.mtype || Object.keys(quoted.message || {})[0];
+        // Detect message type
+        const type =
+            quoted.mtype ||
+            Object.keys(quoted.message || {})[0];
 
-        // TEXT
-        if (type === "conversation" || type === "extendedTextMessage") {
+        // =========================
+        // TEXT MESSAGE
+        // =========================
+
+        if (
+            type === "conversation" ||
+            type === "extendedTextMessage"
+        ) {
 
             const text =
                 quoted.text ||
                 quoted.message?.conversation ||
-                quoted.message?.extendedTextMessage?.text;
+                quoted.message?.extendedTextMessage?.text ||
+                " ";
 
             await conn.sendMessage(jid, {
                 text: text,
@@ -57,10 +66,21 @@ async (conn, mek, m, {
 
         }
 
+        // =========================
         // IMAGE
+        // =========================
+
         else if (type === "imageMessage") {
 
-            const buffer = await quoted.download();
+            const buffer = await conn.downloadMediaMessage(
+                quoted,
+                "buffer",
+                {},
+                {
+                    logger: console,
+                    reuploadRequest: conn.updateMediaMessage
+                }
+            );
 
             await conn.sendMessage(jid, {
                 image: buffer,
@@ -70,37 +90,70 @@ async (conn, mek, m, {
 
         }
 
-        // VIDEO
+        // =========================
+        // VIDEO / MP4
+        // =========================
+
         else if (type === "videoMessage") {
 
-            const buffer = await quoted.download();
+            const buffer = await conn.downloadMediaMessage(
+                quoted,
+                "buffer",
+                {},
+                {
+                    logger: console,
+                    reuploadRequest: conn.updateMediaMessage
+                }
+            );
 
             await conn.sendMessage(jid, {
                 video: buffer,
-                caption: quoted.caption || "",
                 mimetype: "video/mp4",
+                caption: quoted.caption || "",
                 mentions: [jid]
             });
 
         }
 
-        // AUDIO
+        // =========================
+        // AUDIO / MP3
+        // =========================
+
         else if (type === "audioMessage") {
 
-            const buffer = await quoted.download();
+            const buffer = await conn.downloadMediaMessage(
+                quoted,
+                "buffer",
+                {},
+                {
+                    logger: console,
+                    reuploadRequest: conn.updateMediaMessage
+                }
+            );
 
             await conn.sendMessage(jid, {
                 audio: buffer,
-                mimetype: "audio/mp4",
-                ptt: false
+                mimetype: quoted.mimetype || "audio/mp4",
+                ptt: quoted.ptt || false
             });
 
         }
 
+        // =========================
         // DOCUMENT
+        // =========================
+
         else if (type === "documentMessage") {
 
-            const buffer = await quoted.download();
+            const buffer = await conn.downloadMediaMessage(
+                quoted,
+                "buffer",
+                {},
+                {
+                    logger: console,
+                    reuploadRequest: conn.updateMediaMessage
+                }
+            );
 
             await conn.sendMessage(jid, {
                 document: buffer,
@@ -111,10 +164,21 @@ async (conn, mek, m, {
 
         }
 
+        // =========================
         // STICKER
+        // =========================
+
         else if (type === "stickerMessage") {
 
-            const buffer = await quoted.download();
+            const buffer = await conn.downloadMediaMessage(
+                quoted,
+                "buffer",
+                {},
+                {
+                    logger: console,
+                    reuploadRequest: conn.updateMediaMessage
+                }
+            );
 
             await conn.sendMessage(jid, {
                 sticker: buffer
@@ -122,12 +186,15 @@ async (conn, mek, m, {
 
         }
 
-        // CONTACT
+        // =========================
+        // CONTACT CARD
+        // =========================
+
         else if (type === "contactMessage") {
 
             await conn.sendMessage(jid, {
                 contacts: {
-                    displayName: quoted.displayName,
+                    displayName: quoted.displayName || "Contact",
                     contacts: [{
                         vcard: quoted.vcard
                     }]
@@ -136,17 +203,25 @@ async (conn, mek, m, {
 
         }
 
-        // UNKNOWN
+        // =========================
+        // FALLBACK FOR UNKNOWN
+        // =========================
+
         else {
 
-            // direct forward fallback
-            await conn.sendMessage(jid, {
-                forward: quoted.fakeObj
-            });
+            await conn.sendMessage(
+                jid,
+                {
+                    forward: quoted.fakeObj
+                },
+                {
+                    quoted: mek
+                }
+            );
 
         }
 
-        // success reply
+        // Success message
         await reply(`✅ Successfully forwarded to:\n${jid}`);
 
     } catch (err) {
