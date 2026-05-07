@@ -28,7 +28,7 @@ cmd({
 
     const query = args.join(" ").trim();
     if (!query) {
-        await reply(`🎬 Please provide a movie name!\n\nExample: .sinhalasub Leo${footer}`);
+        await reply(`🎬 Please provide a movie name!\n\nExample: .movie Leo${footer}`);
         return;
     }
 
@@ -53,7 +53,7 @@ cmd({
         list += `\nReply with number${footer}`;
 
         // Send the search results as an image with the list as caption
-        const searchImageUrl = "https://files.catbox.moe/knn0ft.jpg"; // Your provided image URL
+        const searchImageUrl = "https://files.catbox.moe/knn0ft.jpg";
         const sent = await conn.sendMessage(from, {
             image: { url: searchImageUrl },
             caption: list
@@ -158,12 +158,15 @@ cmd({
                     const finalUrl = dlRes?.data?.data?.data?.link;
                     if (!finalUrl) throw new Error("No link");
 
+                    // FIXED: Correct caption template string
+                    const downloadCaption = `${movie.maintitle}\n*${target.quality}*\n*${target.size}*${footer}`;
+                    
                     await conn.sendMessage(from, {
                         document: { url: finalUrl },
                         mimetype: "video/mp4",
                         fileName: `${movie.maintitle}_${target.quality}.mp4`,
                         jpegThumbnail: await getThumbnailBuffer(movie.imageUrl),
-                        caption: `${movie.maintitle}\n*`[ ${target.quality} ]`*\n*`[ ${target.size}]`*${footer}`
+                        caption: downloadCaption
                     }, { quoted: dlMsg });
                 } catch (err) {
                     console.error(err);
