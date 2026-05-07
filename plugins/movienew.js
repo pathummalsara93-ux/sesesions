@@ -1,0 +1,169 @@
+const { cmd } = require('../command');
+const axios = require('axios');
+const sharp = require('sharp');
+
+// Track downloads per user to prevent conflicts
+const userDownloads = new Map();
+
+cmd({
+    pattern: "sinhalasub",
+    alias: ["ssub", "sinhalasubtitle"],
+    desc: "Download Sinhala subtitled movies",
+    category: "download",
+    react: "🎬",
+    filename: __filename
+}, async (conn, mek, m, { from, args, reply, sender }) => {
+    
+    const footer = "\n\n🅻.🆃 𝐅𝐈𝐋𝐌 𝐇𝐔𝐁 ᵀⱽ ˢᵉʳⁱᵉˢ🎞️";
+    
+    async function getThumbnailBuffer(url) {
+        if (!url) return null;
+        try {
+            const { data } = await axios.get(url, { responseType: "arraybuffer" });
+            return await sharp(data).resize(300, 300).jpeg({ quality: 80 }).toBuffer();
+        } catch {
+            return null;
+        }
+    }
+
+    const query = args.join(" ").trim();
+    if (!query) {
+        await reply(`🎬 Please provide a movie name!\n\nExample: .sinhalasub Leo${footer}`);
+        return;
+    }
+
+    try {
+        await conn.sendMessage(from, { react: { text: "🎬", key: mek.key } });
+
+        // 🔍 SEARCH
+        const searchUrl = `https://vajira-mv-apikeys.netlify.app/api/sinhalasubs/search?q=${encodeURIComponent(query)}&apikey=vajiraofficial`;
+        const searchRes = await axios.get(searchUrl);
+
+        const results = searchRes?.data?.data?.data?.data;
+        if (!results?.length) {
+            await reply(`❌ No movies found.${footer}`);
+            return;
+        }
+
+        let list = `🎬 *SINHALASUB SEARCH*\n\n🔎 ${query.toUpperCase()}\n\n`;
+        results.slice(0, 8).forEach((v, i) => {
+            list += `*${i + 1}* ☛ ${v.title.split("|")[0].trim()}\n`;
+        });
+        list += `\nReply with number${footer}`;
+
+        const sent = await conn.sendMessage(from, { text: list }, { quoted: mek });
+        const searchMsgId = sent.key.id;
+
+        // Temporary event handler for selection
+        const searchHandler = async (msgUpdate) => {
+            const upmsg = msgUpdate.messages[0];
+            if (!upmsg.message || upmsg.key.remoteJid !== from) return;
+
+            const body = upmsg.message.conversation || upmsg.message.extendedTextMessage?.text;
+            const ctx = upmsg.message.extendedTextMessage?.contextInfo;
+            if (ctx?.stanzaId !== searchMsgId) return;
+
+            // Remove this listener once triggered
+            conn.ev.off("messages.upsert", searchHandler);
+
+            const num = parseInt(body);
+            const selected = results[num - 1];
+            if (!selected) {
+                await conn.sendMessage(from, { text: `❎ Invalid number${footer}` }, { quoted: upmsg });
+                return;
+            }
+
+            await conn.sendMessage(from, { react: { text: "📑", key: upmsg.key } });
+
+            // 📑 DETAILS
+            const detailUrl = `https://vajira-mv-apikeys.netlify.app/api/sinhalasubs/movie?url=${encodeURIComponent(selected.link)}&apikey=vajiraofficial`;
+            const detailRes = await axios.get(detailUrl);
+
+            const data = detailRes?.data?.data?.data;
+            const movie = data?.mainDetails;
+            const links = data?.dllinks?.DownloadLinks;
+
+            if (!movie || !links?.length) {
+                await conn.sendMessage(from, { text: `❌ No details found.${footer}` }, { quoted: upmsg });
+                return;
+            }
+
+            let cap = `🎬 *${movie.maintitle}*\n\n`;
+            cap += `⭐ ${movie.imdbRating || "N/A"}\n`;
+            cap += `📅 ${movie.dateCreated || "N/A"}\n\n`;
+            cap += `📥 Reply number to download:\n\n`;
+
+            links.forEach((d, i) => {
+                cap += `*${i + 1}* ☛ ${d.quality} (${d.size})\n`;
+            });
+            cap += footer;
+
+            const sentDetail = await conn.sendMessage(from, {
+                image: { url: movie.imageUrl },
+                caption: cap
+            }, { quoted: upmsg });
+
+            const detailMsgId = sentDetail.key.id;
+
+            // Handler for download selection
+            const dlHandler = async (dlUpdate) => {
+                const dlMsg = dlUpdate.messages[0];
+                if (!dlMsg.message || dlMsg.key.remoteJid !== from) return;
+
+                const dlBody = dlMsg.message.conversation || dlMsg.message.extendedTextMessage?.text;
+                const dlCtx = dlMsg.message.extendedTextMessage?.contextInfo;
+                if (dlCtx?.stanzaId !== detailMsgId) return;
+
+                conn.ev.off("messages.upsert", dlHandler);
+
+                const idx = parseInt(dlBody);
+                const target = links[idx - 1];
+                if (!target) {
+                    await conn.sendMessage(from, { text: `❎ Invalid selection${footer}` }, { quoted: dlMsg });
+                    return;
+                }
+
+                // Check if user already downloading
+                if (userDownloads.get(from)) {
+                    await conn.sendMessage(from, { text: `⏳ Another download running...${footer}` }, { quoted: dlMsg });
+                    return;
+                }
+
+                userDownloads.set(from, true);
+
+                await conn.sendMessage(from, { react: { text: "📥", key: dlMsg.key } });
+
+                try {
+                    // 📥 DOWNLOAD
+                    const dlApi = `https://vajira-mv-apikeys.netlify.app/api/sinhalasubs/download?url=${encodeURIComponent(target.link)}&apikey=vajiraofficial`;
+                    const dlRes = await axios.get(dlApi);
+
+                    const finalUrl = dlRes?.data?.data?.data?.link;
+                    if (!finalUrl) throw new Error("No link");
+
+                    await conn.sendMessage(from, {
+                        document: { url: finalUrl },
+                        mimetype: "video/mp4",
+                        fileName: `${movie.maintitle}_${target.quality}.mp4`,
+                        jpegThumbnail: await getThumbnailBuffer(movie.imageUrl),
+                        caption: `✅ *Download Ready*\n\n🎬 ${movie.maintitle}\n📀 ${target.quality}\n📦 ${target.size}${footer}`
+                    }, { quoted: dlMsg });
+
+                } catch (err) {
+                    console.error(err);
+                    await conn.sendMessage(from, { text: `❌ Download failed.${footer}` }, { quoted: dlMsg });
+                } finally {
+                    userDownloads.delete(from);
+                }
+            };
+
+            conn.ev.on("messages.upsert", dlHandler);
+        };
+
+        conn.ev.on("messages.upsert", searchHandler);
+
+    } catch (e) {
+        console.error(e);
+        await reply(`❌ API Error${footer}`);
+    }
+});
