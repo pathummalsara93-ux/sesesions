@@ -156,7 +156,7 @@ cmd({
                     if (!finalUrl) throw new Error("No link");
 
                     // Document caption: *Title* [*Quality*] [*Size*] + footer
-                    const docCaption = `*${movie.maintitle}*\n\n *[${target.quality}]*\n *[${target.size}]*${footer}`;
+                    const docCaption = `*${movie.maintitle}*\n\n *Quality* [${target.quality}]*\n ${footer}`;
 
                     await conn.sendMessage(from, {
                         document: { url: finalUrl },
