@@ -4,21 +4,12 @@
 const { cmd } = require('../command');
 const axios = require('axios');
 const sharp = require('sharp');
-
-// ⭐ NPM Scraper Package
-let scraper;
-try {
-    scraper = require('liyanaarachchi-sinhalasub-scraper-v2');
-    console.log('✅ Sinhalasub scraper loaded');
-} catch (e) {
-    console.log('❌ Scraper package not installed:', e.message);
-    console.log('📦 Run: npm install liyanaarachchi-sinhalasub-scraper-v2');
-}
+const scraper = require('liyanaarachchi-sinhalasub-scraper-v2');
 
 const userDownloads = new Map();
 
 // ══════════════════════════════════════════════════════════════
-// 🔧 HELPER FUNCTIONS
+// 🔧 THUMBNAIL BUFFER
 // ══════════════════════════════════════════════════════════════
 async function getThumbnailBuffer(url) {
     if (!url) return null;
@@ -33,84 +24,53 @@ async function getThumbnailBuffer(url) {
     }
 }
 
-// ⭐ Flexible function caller — different API names support
-async function tryScraperMethods(obj, methods, ...args) {
-    for (const method of methods) {
-        if (typeof obj[method] === 'function') {
-            try {
-                const result = await obj[method](...args);
-                if (result) {
-                    console.log(`✅ scraper.${method}() worked`);
-                    return result;
-                }
-            } catch (e) {
-                console.log(`⚠️ scraper.${method}() failed: ${e.message}`);
-            }
-        }
-    }
-    return null;
-}
-
 // ══════════════════════════════════════════════════════════════
-// 🎬 MOVIE COMMAND
+// 🎬 MOVIE COMMAND — Using NPM Package
 // ══════════════════════════════════════════════════════════════
 cmd({
     pattern: "movie",
     alias: ["ssub", "sinhalasubtitle", "film"],
-    desc: "Download Sinhala subtitled movies via scraper",
+    desc: "Download Sinhala subtitled movies (NPM scraper)",
     category: "download",
     react: "🎬",
     filename: __filename
 }, async (conn, mek, m, { from, args, reply, sender }) => {
 
     const footer = "\n\n🅻.🆃 𝐅𝐈𝐋𝐌 𝐇𝐔𝐁 ᵀⱽ ˢᵉʳⁱᵉˢ🎞️";
-
-    // ─────── Package check ───────
-    if (!scraper) {
-        return reply(`❌ *Scraper package not installed!*\n\nRun: \`npm install liyanaarachchi-sinhalasub-scraper-v2\`${footer}`);
-    }
+    const DEFAULT_THUMB = "https://files.catbox.moe/knn0ft.jpg";
 
     const query = args.join(" ").trim();
     if (!query) {
-        return reply(`🎬 Please provide a movie name!\n\nExample: .movie Leo${footer}`);
+        return reply(`🎬 Please provide a movie name!\n\nExample: .movie Deadpool${footer}`);
     }
 
     try {
         await conn.sendMessage(from, { react: { text: "🔍", key: mek.key } });
 
         // ═══════════════════════════════════════════════════════
-        // 🔍 STEP 1: SEARCH
+        // 🔍 STEP 1: SEARCH — scraper.searchSinhalaSub()
         // ═══════════════════════════════════════════════════════
         console.log(`🔍 Searching: ${query}`);
 
-        let results = await tryScraperMethods(
-            scraper,
-            ['searchMovie', 'search', 'searchSinhalaSub', 'searchSinhalasub'],
-            query
-        );
+        const results = await scraper.searchSinhalaSub(query);
 
-        // Handle different return formats
-        if (results && typeof results === 'object' && !Array.isArray(results)) {
-            results = results.results || results.data || results.movies || results.list || [];
-        }
-
-        if (!Array.isArray(results) || results.length === 0) {
+        if (!results || !Array.isArray(results) || results.length === 0) {
             await conn.sendMessage(from, { react: { text: "❌", key: mek.key } });
             return reply(`❌ No movies found for: *${query}*${footer}`);
         }
 
         console.log(`✅ Found ${results.length} results`);
 
-        // ─────── Format results ───────
+        // ─────── Format search results ───────
         let list = `〽️ *SINHALASUB SEARCH*\n\n🔎 ${query.toUpperCase()}\n\n`;
         results.slice(0, 10).forEach((v, i) => {
-            const title = (v.title || v.name || v.movie || 'Unknown').split("|")[0].trim();
+            const title = (v.title || 'Unknown').split("|")[0].trim();
             list += `☣️${i + 1}❭❭⚬ ${title}\n`;
         });
         list += `\nReply with number${footer}`;
 
         const sent = await conn.sendMessage(from, {
-            image: { url: "https://files.catbox.moe/knn0ft.jpg" },
+            image: { url: DEFAULT_THUMB },
             caption: list
         }, { quoted: mek });
         const searchMsgId = sent.key.id;
@@ -136,91 +96,49 @@ cmd({
 
             await conn.sendMessage(from, { react: { text: "📑", key: upmsg.key } });
 
-            const movieUrl = selected.link || selected.url || selected.href;
-            const movieTitle = (selected.title || selected.name || 'Movie').split("|")[0].trim();
+            const movieTitle = (selected.title || 'Movie').split("|")[0].trim();
+            const movieUrl = selected.link;
 
-            console.log(`📥 Getting details: ${movieUrl}`);
-
-            // ═══════════════════════════════════════════════════
-            // 📑 STEP 2: GET MOVIE DETAILS
-            // ═══════════════════════════════════════════════════
-            let movie = await tryScraperMethods(
-                scraper,
-                ['getMovieDetails', 'getDetails', 'getMovieInfo', 'movieDetails', 'details'],
-                movieUrl
-            );
-
-            // Fallback — search result data
-            if (!movie) {
-                console.log('⚠️ Details failed, using search result data');
-                movie = {
-                    maintitle: movieTitle,
-                    imageUrl: selected.image || selected.poster || null,
-                    imdbRating: selected.rating || null,
-                    dateCreated: selected.year || null,
-                    genres: selected.genres || null
-                };
-            }
-
-            // Handle nested response
-            if (movie.mainDetails) movie = { ...movie, ...movie.mainDetails };
-
-            const mainTitle = movie.maintitle || movie.title || movie.name || movieTitle;
-            const imageUrl = movie.imageUrl || movie.image || movie.poster || null;
-
-            // ─────── 🖼️ DETAILS CARD ───────
-            let cap = `*☘️ ${mainTitle}*\n\n`;
-            if (movie.imdbRating) cap += `*⭐ IMDb* ➟ *${movie.imdbRating}*\n`;
-            if (movie.dateCreated || movie.year) cap += `*📅 Release* ➟ *${movie.dateCreated || movie.year}*\n`;
-            if (movie.country) cap += `*🌎 Country* ➟ *${movie.country}*\n`;
-            if (movie.runtime || movie.duration) cap += `*⏱️ Duration* ➟ *${movie.runtime || movie.duration}*\n`;
-            const genres = movie.genres || movie.genre;
-            if (genres) cap += `*🎭 Genres* ➟ *${Array.isArray(genres) ? genres.join(', ') : genres}*\n`;
-            if (movie.director) cap += `*👨🏻‍💼 Director* ➟ *${movie.director}*\n`;
-            if (movie.cast || movie.actors) cap += `*🕵️‍♂️ Cast* ➟ *${movie.cast || movie.actors}*\n`;
-            if (movie.description || movie.plot) cap += `\n*📖 Description:*\n*${movie.description || movie.plot}*\n`;
-            cap += footer;
-
-            if (imageUrl && imageUrl.startsWith('http')) {
-                await conn.sendMessage(from, {
-                    image: { url: imageUrl },
-                    caption: cap
-                }, { quoted: upmsg });
-            } else {
-                await conn.sendMessage(from, { text: cap }, { quoted: upmsg });
-            }
+            console.log(`📥 Getting links: ${movieUrl}`);
 
             // ═══════════════════════════════════════════════════
-            // 📥 STEP 3: GET DOWNLOAD LINKS
+            // 📥 STEP 2: GET DOWNLOAD LINKS — scraper.getMovieLinks()
             // ═══════════════════════════════════════════════════
-            console.log(`📥 Getting download links for: ${movieUrl}`);
-
-            let downloadLinks = await tryScraperMethods(
-                scraper,
-                ['getDownloadLinks', 'downloadLinks', 'getLinks', 'getMovieDownloadLinks'],
-                movieUrl
-            );
-
-            // Handle different formats
-            if (downloadLinks && typeof downloadLinks === 'object' && !Array.isArray(downloadLinks)) {
-                downloadLinks = downloadLinks.links || downloadLinks.downloads || downloadLinks.data || [];
-            }
-
-            if (!Array.isArray(downloadLinks) || downloadLinks.length === 0) {
+            let downloadLinks;
+            try {
+                downloadLinks = await scraper.getMovieLinks(movieUrl);
+            } catch (e) {
+                console.log(`❌ getMovieLinks failed: ${e.message}`);
                 await conn.sendMessage(from, { react: { text: "❌", key: upmsg.key } });
                 return conn.sendMessage(from, {
-                    text: `❌ *No download links found*\n\n_Movie page: ${movieUrl}_${footer}`
+                    text: `❌ *Failed to get download links*\n\n_${e.message}_${footer}`
+                }, { quoted: upmsg });
+            }
+
+            if (!downloadLinks || !Array.isArray(downloadLinks) || downloadLinks.length === 0) {
+                await conn.sendMessage(from, { react: { text: "❌", key: upmsg.key } });
+                return conn.sendMessage(from, {
+                    text: `❌ *No download links found*\n\n_Movie: ${movieTitle}_${footer}`
                 }, { quoted: upmsg });
             }
 
             console.log(`✅ Found ${downloadLinks.length} download links`);
 
+            // ─────── 🖼️ DETAILS CARD ───────
+            let cap = `*☘️ ${movieTitle}*\n\n`;
+            cap += `*📥 Available Downloads* ➟ *${downloadLinks.length} options*\n`;
+            cap += `\n*🎬 Select a quality below:*${footer}`;
+
+            await conn.sendMessage(from, {
+                image: { url: DEFAULT_THUMB },
+                caption: cap
+            }, { quoted: upmsg });
+
             // ─────── 📋 QUALITY LIST ───────
             let qualityMsg = `📥 *Select Quality to Download:*\n\n`;
             downloadLinks.forEach((d, i) => {
-                const quality = d.quality || d.label || d.title || `Option ${i + 1}`;
-                const size = d.size ? ` (${d.size})` : '';
-                qualityMsg += `*${i + 1}* ☛ ${quality}${size}\n`;
+                const label = d.label || d.quality || `Option ${i + 1}`;
+                qualityMsg += `*${i + 1}* ☛ ${label}\n`;
             });
             qualityMsg += `\nReply with number${footer}`;
 
@@ -254,18 +172,32 @@ cmd({
                 await conn.sendMessage(from, { react: { text: "⏳", key: dlMsg.key } });
 
                 try {
-                    const finalUrl = target.link || target.url || target.download || target.href;
-                    const quality = target.quality || target.label || target.title || 'Unknown';
+                    const finalUrl = target.link || target.url || target.download;
+                    const label = target.label || target.quality || 'Unknown';
 
                     if (!finalUrl || !finalUrl.startsWith('http')) {
                         throw new Error('Invalid download URL');
                     }
 
-                    const safeName = mainTitle.replace(/[^\w\s\-]/g, '').trim().slice(0, 50);
-                    const safeQuality = quality.replace(/[^\w\-]/g, '').trim();
+                    // ─────── 🧹 SAFE FILENAME ───────
+                    const safeName = movieTitle
+                        .replace(/[^\w\s\-]/g, '')
+                        .replace(/\s+/g, '_')
+                        .trim()
+                        .slice(0, 50);
+
+                    const safeQuality = label
+                        .replace(/[^\w\-|]/g, '')
+                        .replace(/\s+/g, '_')
+                        .trim()
+                        .slice(0, 30);
+
                     const fileName = `${safeName}_${safeQuality}.mp4`;
 
-                    const docCaption = `*${mainTitle}*\n\n*Quality* *[${quality}]*\n${footer}`;
+                    const docCaption =
+                        `*🎬 ${movieTitle}*\n\n` +
+                        `*📊 Quality* ➟ *${label}*\n` +
+                        `${footer}`;
 
                     console.log(`📤 Sending: ${fileName}`);
                     console.log(`🔗 URL: ${finalUrl}`);
@@ -274,12 +206,12 @@ cmd({
                         document: { url: finalUrl },
                         mimetype: "video/mp4",
                         fileName: fileName,
-                        jpegThumbnail: await getThumbnailBuffer(imageUrl),
+                        jpegThumbnail: await getThumbnailBuffer(DEFAULT_THUMB),
                         caption: docCaption
                     }, { quoted: dlMsg });
 
                     await conn.sendMessage(from, { react: { text: "✅", key: dlMsg.key } });
-                    console.log(`✅ Movie sent: ${mainTitle} [${quality}]`);
+                    console.log(`✅ Movie sent: ${movieTitle} [${label}]`);
 
                 } catch (err) {
                     console.log(`❌ DL error: ${err.message}`);
@@ -303,3 +235,9 @@ cmd({
         await reply(`❌ Error: _${e.message}_${footer}`);
     }
 });
+
+
+
+
+
+
