@@ -4,27 +4,133 @@
 const { cmd } = require('../command');
 const axios = require('axios');
 const sharp = require('sharp');
+const cheerio = require('cheerio');
 
 const userDownloads = new Map();
 
 // ══════════════════════════════════════════════════════════════
-// 🔧 SAFE AXIOS — clean error messages
+// 🔧 SAFE AXIOS
 // ══════════════════════════════════════════════════════════════
 async function safeAxios(url, options = {}) {
     try {
         const res = await axios.get(url, {
             timeout: 20000,
+            headers: {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8'
+            },
             ...options
         });
         return { ok: true, data: res.data };
     } catch (e) {
-        // Clean error message — no huge stack trace
         const status = e.response?.status;
         const msg = e.response?.data?.error || e.message;
         return { ok: false, status, error: msg };
     }
 }
 
+// ══════════════════════════════════════════════════════════════
+// 🔍 SCRAPE — Extract real download links from sinhalasub.lk
+// ══════════════════════════════════════════════════════════════
+async function scrapeDownloadLinks(sinhalasubUrl) {
+    try {
+        console.log(`🔍 Scraping: ${sinhalasubUrl}`);
+        const res = await safeAxios(sinhalasubUrl);
+        if (!res.ok) throw new Error(`Page fetch failed: ${res.error}`);
+
+        const $ = cheerio.load(res.data);
+        const foundLinks = [];
+
+        // ─────────────────────────────────────────────
+        // 🎯 Method 1: Look for common download buttons
+        // ─────────────────────────────────────────────
+        $('a').each((i, el) => {
+            const href = $(el).attr('href');
+            const text = $(el).text().trim();
+
+            if (!href) return;
+            if (href.startsWith('#') || href.startsWith('javascript')) return;
+            if (href.includes('sinhalasub.lk/links/')) return;
+
+            // Match external hosts
+            const hosts = [
+                'drive.google.com', 'mega.nz', 'pixeldrain.com',
+                '1drv.ms', 'onedrive.live.com', 'mediafire.com',
+                'dropbox.com', 'disk.yandex', 'streamtape', 'dood'
+            ];
+
+            const isExternal = hosts.some(h => href.includes(h));
+
+            // Match quality keywords
+            const qualityMatch = text.match(/(\d{3,4}p|HD|FHD|SD|4K)/i);
+
+            if (isExternal || qualityMatch) {
+                foundLinks.push({
+                    quality: qualityMatch ? qualityMatch[0] : (text || 'Download'),
+                    url: href,
+                    source: new URL(href).hostname
+                });
+            }
+        });
+
+        // ─────────────────────────────────────────────
+        // 🎯 Method 2: Look for embedded iframes
+        // ─────────────────────────────────────────────
+        $('iframe').each((i, el) => {
+            const src = $(el).attr('src');
+            if (src && !src.startsWith('#')) {
+                const hosts = ['drive.google', 'mega', 'pixeldrain', 'mediafire'];
+                if (hosts.some(h => src.includes(h))) {
+                    foundLinks.push({
+                        quality: 'Embedded',
+                        url: src,
+                        source: 'iframe'
+                    });
+                }
+            }
+        });
+
+        // ─────────────────────────────────────────────
+        // 🎯 Method 3: Look for data attributes with links
+        // ─────────────────────────────────────────────
+        $('[data-link], [data-url], [data-href]').each((i, el) => {
+            const link = $(el).attr('data-link') || $(el).attr('data-url') || $(el).attr('data-href');
+            if (link && link.startsWith('http')) {
+                foundLinks.push({
+                    quality: $(el).text().trim() || 'Download',
+                    url: link,
+                    source: 'data-attr'
+                });
+            }
+        });
+
+        // ─────────────────────────────────────────────
+        // 🎯 Method 4: Regex fallback — raw HTML scan
+        // ─────────────────────────────────────────────
+        if (foundLinks.length === 0) {
+            const html = res.data;
+            const regex = /https?:\/\/(?:drive\.google\.com|mega\.nz|pixeldrain\.com|mediafire\.com|1drv\.ms|dropbox\.com)[^\s"'<>]+/gi;
+            const matches = html.match(regex) || [];
+            matches.forEach(url => {
+                foundLinks.push({
+                    quality: 'Direct',
+                    url: url.replace(/[\\'"]+$/, ''),
+                    source: new URL(url).hostname
+                });
+            });
+        }
+
+        console.log(`✅ Found ${foundLinks.length} download links`);
+        return foundLinks;
+    } catch (e) {
+        console.log(`❌ Scrape error: ${e.message}`);
+        return [];
+    }
+}
+
+// ══════════════════════════════════════════════════════════════
+// 🎬 MOVIE COMMAND
+// ══════════════════════════════════════════════════════════════
 cmd({
     pattern: "movie",
     alias: ["ssub", "sinhalasubtitle"],
@@ -41,20 +147,14 @@ cmd({
     async function getThumbnailBuffer(url) {
         if (!url) return null;
         try {
-            const { data } = await axios.get(url, {
-                responseType: "arraybuffer",
-                timeout: 10000
-            });
+            const { data } = await axios.get(url, { responseType: "arraybuffer", timeout: 10000 });
             return await sharp(data).resize(300, 300).jpeg({ quality: 80 }).toBuffer();
-        } catch {
-            return null;
-        }
+        } catch { return null; }
     }
 
     const query = args.join(" ").trim();
     if (!query) {
-        await reply(`🎬 Please provide a movie name!\n\nExample: .movie Leo${footer}`);
-        return;
+        return reply(`🎬 Please provide a movie name!\n\nExample: .movie Leo${footer}`);
     }
 
     try {
@@ -63,9 +163,8 @@ cmd({
         // ─────── 🔍 SEARCH ───────
         const searchRes = await safeAxios(`${API_BASE}/search?q=${encodeURIComponent(query)}&apikey=${API_KEY}`);
         if (!searchRes.ok) {
-            console.log(`⚠️ Search API failed: ${searchRes.error}`);
             await conn.sendMessage(from, { react: { text: "❌", key: mek.key } });
-            return reply(`❌ *Search failed.*\n\n_Reason:_ ${searchRes.error}${footer}`);
+            return reply(`❌ *Search failed.*\n\n_${searchRes.error}_${footer}`);
         }
 
         const results = searchRes.data?.data?.data?.data;
@@ -74,7 +173,6 @@ cmd({
             return reply(`❌ No movies found for: *${query}*${footer}`);
         }
 
-        // ─────── 📋 LIST ───────
         let list = `〽️ *SINHALASUB SEARCH*\n\n🔎 ${query.toUpperCase()}\n\n`;
         results.forEach((v, i) => {
             list += `☣️${i + 1}❭❭⚬ ${v.title.split("|")[0].trim()}\n`;
@@ -87,9 +185,9 @@ cmd({
         }, { quoted: mek });
         const searchMsgId = sent.key.id;
 
-        // ═══════════════════════════════════════════════════════
-        // 🔁 SEARCH SELECTION HANDLER
-        // ═══════════════════════════════════════════════════════
+        // ═══════════════════════════════════════════════════
+        // 🔁 SEARCH SELECTION
+        // ═══════════════════════════════════════════════════
         const searchHandler = async (msgUpdate) => {
             const upmsg = msgUpdate.messages[0];
             if (!upmsg.message || upmsg.key.remoteJid !== from) return;
@@ -111,11 +209,8 @@ cmd({
             // ─────── 📑 DETAILS ───────
             const detailRes = await safeAxios(`${API_BASE}/movie?url=${encodeURIComponent(selected.link)}&apikey=${API_KEY}`);
             if (!detailRes.ok) {
-                console.log(`⚠️ Detail API failed: ${detailRes.error}`);
                 await conn.sendMessage(from, { react: { text: "❌", key: upmsg.key } });
-                return conn.sendMessage(from, {
-                    text: `❌ *Details API failed.*\n\n_Reason:_ ${detailRes.error}${footer}`
-                }, { quoted: upmsg });
+                return conn.sendMessage(from, { text: `❌ Details failed: _${detailRes.error}_${footer}` }, { quoted: upmsg });
             }
 
             const data = detailRes.data?.data?.data;
@@ -154,9 +249,9 @@ cmd({
             const sentQuality = await conn.sendMessage(from, { text: qualityMsg }, { quoted: upmsg });
             const qualityMsgId = sentQuality.key.id;
 
-            // ═══════════════════════════════════════════════════════
-            // 🔽 DOWNLOAD HANDLER
-            // ═══════════════════════════════════════════════════════
+            // ═══════════════════════════════════════════════════
+            // 🔽 DOWNLOAD HANDLER — DIRECT SCRAPE (no API)
+            // ═══════════════════════════════════════════════════
             const dlHandler = async (dlUpdate) => {
                 const dlMsg = dlUpdate.messages[0];
                 if (!dlMsg.message || dlMsg.key.remoteJid !== from) return;
@@ -179,36 +274,61 @@ cmd({
 
                 userDownloads.set(from, true);
                 await conn.sendMessage(from, { react: { text: "⏳", key: dlMsg.key } });
+                await conn.sendMessage(from, {
+                    text: `🔍 *Fetching download link...*\n\n_Method: Direct Scrape_`
+                }, { quoted: dlMsg });
 
                 try {
-                    // ⭐ Clean download request
-                    const dlRes = await safeAxios(`${API_BASE}/download?url=${encodeURIComponent(target.link)}&apikey=${API_KEY}`);
+                    // ⭐ DIRECT SCRAPE — sinhalasub.lk page එකෙන් link එක ගන්නවා
+                    const scrapedLinks = await scrapeDownloadLinks(target.link);
 
-                    // ⭐ If API fails — give user an alternative
-                    if (!dlRes.ok) {
-                        console.log(`⚠️ Download API failed (${dlRes.status}): ${dlRes.error}`);
+                    let finalUrl = null;
+
+                    // Best match හොයන්න — quality එකට closest
+                    if (scrapedLinks.length > 0) {
+                        // Quality match try
+                        const q = target.quality || '';
+                        const qNum = q.match(/(\d{3,4})p/)?.[1];
+                        const matched = scrapedLinks.find(l =>
+                            qNum && l.quality.includes(qNum + 'p')
+                        );
+                        finalUrl = matched?.url || scrapedLinks[0].url;
+                    }
+
+                    // ⭐ Fallback: Try Vajira API if scrape fails
+                    if (!finalUrl) {
+                        console.log('⚠️ Scrape failed, trying Vajira API...');
+                        const dlRes = await safeAxios(`${API_BASE}/download?url=${encodeURIComponent(target.link)}&apikey=${API_KEY}`);
+                        if (dlRes.ok) {
+                            finalUrl = dlRes.data?.data?.data?.link || dlRes.data?.link;
+                        }
+                    }
+
+                    // ⭐ Final check
+                    if (!finalUrl) {
                         await conn.sendMessage(from, { react: { text: "⚠️", key: dlMsg.key } });
-
                         return conn.sendMessage(from, {
                             text:
-                                `⚠️ *Download API is currently down*\n\n` +
-                                `📌 *Movie:* ${movie.maintitle}\n` +
-                                `📊 *Quality:* ${target.quality}\n` +
-                                `💾 *Size:* ${target.size}\n\n` +
-                                `🔗 *Try direct link:*\n${target.link}\n\n` +
-                                `_API error: ${dlRes.error || 'Server error'}_${footer}`
+                                `⚠️ *Download link එක හොයාගන්න බැහැ*\n\n` +
+                                `📌 Movie: ${movie.maintitle}\n` +
+                                `📊 Quality: ${target.quality}\n` +
+                                `💾 Size: ${target.size}\n\n` +
+                                `🔗 *Source page:*\n${target.link}\n\n` +
+                                `_Site එකේ structure එක වෙනස් වෙලා ඇති. Admin ට කියන්න._${footer}`
                         }, { quoted: dlMsg });
                     }
 
-                    const finalUrl = dlRes.data?.data?.data?.link || dlRes.data?.link || dlRes.data?.url;
-                    if (!finalUrl) throw new Error("No download link in response");
-
+                    // ─────── 📤 SEND DOCUMENT ───────
                     const docCaption = `*${movie.maintitle}*\n\n*Quality* *[${target.quality}]*\n${footer}`;
+                    const fileName = `${movie.maintitle.replace(/[^\w\s\-]/g, '').trim()}_${target.quality}.mp4`;
+
+                    console.log(`📤 Sending document: ${fileName}`);
+                    console.log(`🔗 URL: ${finalUrl}`);
 
                     await conn.sendMessage(from, {
                         document: { url: finalUrl },
                         mimetype: "video/mp4",
-                        fileName: `${movie.maintitle}_${target.quality}.mp4`,
+                        fileName: fileName,
                         jpegThumbnail: await getThumbnailBuffer(movie.imageUrl),
                         caption: docCaption
                     }, { quoted: dlMsg });
@@ -235,6 +355,6 @@ cmd({
     } catch (e) {
         console.log(`❌ Movie plugin error: ${e.message}`);
         await conn.sendMessage(from, { react: { text: "❌", key: mek.key } });
-        await reply(`❌ API Error: _${e.message}_${footer}`);
+        await reply(`❌ Error: _${e.message}_${footer}`);
     }
 });
