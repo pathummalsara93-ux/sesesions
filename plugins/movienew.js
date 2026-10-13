@@ -25,12 +25,101 @@ async function getThumbnailBuffer(url) {
 }
 
 // ══════════════════════════════════════════════════════════════
-// 🎬 MOVIE COMMAND — Using NPM Package
+// 🔍 RESOLVE DOWNLOAD URL — follow redirects & verify content
+// ══════════════════════════════════════════════════════════════
+async function resolveDownloadUrl(url) {
+    try {
+        console.log(`🔍 Resolving: ${url}`);
+
+        // ⭐ HEAD request — content-type + size check
+        const headRes = await axios({
+            method: 'HEAD',
+            url: url,
+            timeout: 15000,
+            maxRedirects: 10,   // ⭐ Follow redirects!
+            headers: {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+            },
+            validateStatus: () => true
+        });
+
+        const contentType = headRes.headers['content-type'] || '';
+        const contentLength = parseInt(headRes.headers['content-length'] || '0');
+        const finalUrl = headRes.request?.res?.responseUrl || url;
+
+        console.log(`📋 Content-Type: ${contentType}`);
+        console.log(`📦 Size: ${(contentLength / 1024 / 1024).toFixed(2)} MB`);
+        console.log(`🔗 Final URL: ${finalUrl}`);
+
+        // ✅ Real video file
+        if (contentType.includes('video/') || contentType.includes('application/octet-stream')) {
+            if (contentLength > 1024 * 1024) {   // > 1 MB
+                return { ok: true, url: finalUrl, size: contentLength, type: contentType };
+            }
+            return { ok: false, error: `File too small: ${(contentLength / 1024).toFixed(0)} KB`, url: finalUrl };
+        }
+
+        // ❌ HTML page — try to extract real link
+        if (contentType.includes('text/html')) {
+            console.log('⚠️ HTML page detected — extracting real link...');
+
+            const pageRes = await axios.get(finalUrl, {
+                timeout: 15000,
+                maxRedirects: 10,
+                headers: {
+                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+                }
+            });
+
+            const html = pageRes.data;
+
+            // Extract meta refresh, direct links
+            const patterns = [
+                /<meta[^>]+http-equiv=["']refresh["'][^>]+content=["'][^"']*url=([^"'\s>]+)/i,
+                /(https?:\/\/[^\s"'<>]+\.(?:mp4|mkv|avi|mov)[^\s"'<>]*)/i,
+                /(https?:\/\/[^\s"'<>]*drive\.google\.com[^\s"'<>]*)/i,
+                /(https?:\/\/[^\s"'<>]*mega\.nz[^\s"'<>]*)/i,
+                /(https?:\/\/[^\s"'<>]*pixeldrain\.com[^\s"'<>]*)/i,
+                /(https?:\/\/[^\s"'<>]*mediafire\.com[^\s"'<>]*)/i,
+                /window\.location\.href\s*=\s*["']([^"']+)["']/i,
+                /location\.replace\(["']([^"']+)["']\)/i
+            ];
+
+            for (const pattern of patterns) {
+                const match = html.match(pattern);
+                if (match && match[1]) {
+                    const extracted = match[1].replace(/&amp;/g, '&');
+                    console.log(`✅ Extracted: ${extracted}`);
+                    if (extracted !== url && extracted.startsWith('http')) {
+                        // Recursively resolve
+                        return await resolveDownloadUrl(extracted);
+                    }
+                }
+            }
+
+            return { ok: false, error: 'Could not extract video link from HTML page', url: finalUrl };
+        }
+
+        // ⚠️ Unknown content-type — but might still be video
+        if (contentLength > 1024 * 1024) {
+            return { ok: true, url: finalUrl, size: contentLength, type: contentType };
+        }
+
+        return { ok: false, error: `Unsupported: ${contentType}`, url: finalUrl };
+
+    } catch (e) {
+        console.log(`❌ Resolve error: ${e.message}`);
+        return { ok: false, error: e.message, url };
+    }
+}
+
+// ══════════════════════════════════════════════════════════════
+// 🎬 MOVIE COMMAND
 // ══════════════════════════════════════════════════════════════
 cmd({
     pattern: "movie",
     alias: ["ssub", "sinhalasubtitle", "film"],
-    desc: "Download Sinhala subtitled movies (NPM scraper)",
+    desc: "Download Sinhala subtitled movies",
     category: "download",
     react: "🎬",
     filename: __filename
@@ -47,11 +136,8 @@ cmd({
     try {
         await conn.sendMessage(from, { react: { text: "🔍", key: mek.key } });
 
-        // ═══════════════════════════════════════════════════════
-        // 🔍 STEP 1: SEARCH — scraper.searchSinhalaSub()
-        // ═══════════════════════════════════════════════════════
+        // ─────── 🔍 SEARCH ───────
         console.log(`🔍 Searching: ${query}`);
-
         const results = await scraper.searchSinhalaSub(query);
 
         if (!results || !Array.isArray(results) || results.length === 0) {
@@ -59,13 +145,9 @@ cmd({
             return reply(`❌ No movies found for: *${query}*${footer}`);
         }
 
-        console.log(`✅ Found ${results.length} results`);
-
-        // ─────── Format search results ───────
         let list = `〽️ *SINHALASUB SEARCH*\n\n🔎 ${query.toUpperCase()}\n\n`;
         results.slice(0, 10).forEach((v, i) => {
-            const title = (v.title || 'Unknown').split("|")[0].trim();
-            list += `☣️${i + 1}❭❭⚬ ${title}\n`;
+            list += `☣️${i + 1}❭❭⚬ ${(v.title || 'Unknown').split("|")[0].trim()}\n`;
         });
         list += `\nReply with number${footer}`;
 
@@ -75,9 +157,9 @@ cmd({
         }, { quoted: mek });
         const searchMsgId = sent.key.id;
 
-        // ═══════════════════════════════════════════════════════
-        // 🔁 SEARCH SELECTION HANDLER
-        // ═══════════════════════════════════════════════════════
+        // ═══════════════════════════════════════════════════
+        // 🔁 SEARCH SELECTION
+        // ═══════════════════════════════════════════════════
         const searchHandler = async (msgUpdate) => {
             const upmsg = msgUpdate.messages[0];
             if (!upmsg.message || upmsg.key.remoteJid !== from) return;
@@ -99,46 +181,28 @@ cmd({
             const movieTitle = (selected.title || 'Movie').split("|")[0].trim();
             const movieUrl = selected.link;
 
-            console.log(`📥 Getting links: ${movieUrl}`);
-
-            // ═══════════════════════════════════════════════════
-            // 📥 STEP 2: GET DOWNLOAD LINKS — scraper.getMovieLinks()
-            // ═══════════════════════════════════════════════════
+            // ─────── 📥 GET DOWNLOAD LINKS ───────
             let downloadLinks;
             try {
                 downloadLinks = await scraper.getMovieLinks(movieUrl);
             } catch (e) {
-                console.log(`❌ getMovieLinks failed: ${e.message}`);
                 await conn.sendMessage(from, { react: { text: "❌", key: upmsg.key } });
                 return conn.sendMessage(from, {
-                    text: `❌ *Failed to get download links*\n\n_${e.message}_${footer}`
+                    text: `❌ *Failed to get links*\n\n_${e.message}_${footer}`
                 }, { quoted: upmsg });
             }
 
-            if (!downloadLinks || !Array.isArray(downloadLinks) || downloadLinks.length === 0) {
+            if (!downloadLinks || !downloadLinks.length) {
                 await conn.sendMessage(from, { react: { text: "❌", key: upmsg.key } });
                 return conn.sendMessage(from, {
-                    text: `❌ *No download links found*\n\n_Movie: ${movieTitle}_${footer}`
+                    text: `❌ *No download links found*${footer}`
                 }, { quoted: upmsg });
             }
-
-            console.log(`✅ Found ${downloadLinks.length} download links`);
-
-            // ─────── 🖼️ DETAILS CARD ───────
-            let cap = `*☘️ ${movieTitle}*\n\n`;
-            cap += `*📥 Available Downloads* ➟ *${downloadLinks.length} options*\n`;
-            cap += `\n*🎬 Select a quality below:*${footer}`;
-
-            await conn.sendMessage(from, {
-                image: { url: DEFAULT_THUMB },
-                caption: cap
-            }, { quoted: upmsg });
 
             // ─────── 📋 QUALITY LIST ───────
             let qualityMsg = `📥 *Select Quality to Download:*\n\n`;
             downloadLinks.forEach((d, i) => {
-                const label = d.label || d.quality || `Option ${i + 1}`;
-                qualityMsg += `*${i + 1}* ☛ ${label}\n`;
+                qualityMsg += `*${i + 1}* ☛ ${d.label || d.quality || `Option ${i + 1}`}\n`;
             });
             qualityMsg += `\nReply with number${footer}`;
 
@@ -170,40 +234,52 @@ cmd({
 
                 userDownloads.set(from, true);
                 await conn.sendMessage(from, { react: { text: "⏳", key: dlMsg.key } });
+                await conn.sendMessage(from, {
+                    text: `🔍 *Resolving download link...*`
+                }, { quoted: dlMsg });
 
                 try {
-                    const finalUrl = target.link || target.url || target.download;
+                    const rawUrl = target.link || target.url || target.download;
                     const label = target.label || target.quality || 'Unknown';
 
-                    if (!finalUrl || !finalUrl.startsWith('http')) {
-                        throw new Error('Invalid download URL');
+                    if (!rawUrl || !rawUrl.startsWith('http')) {
+                        throw new Error('Invalid URL from scraper');
                     }
 
-                    // ─────── 🧹 SAFE FILENAME ───────
-                    const safeName = movieTitle
-                        .replace(/[^\w\s\-]/g, '')
-                        .replace(/\s+/g, '_')
-                        .trim()
-                        .slice(0, 50);
+                    // ⭐ RESOLVE — redirects + verify
+                    const resolved = await resolveDownloadUrl(rawUrl);
 
-                    const safeQuality = label
-                        .replace(/[^\w\-|]/g, '')
-                        .replace(/\s+/g, '_')
-                        .trim()
-                        .slice(0, 30);
+                    // ❌ Link එක resolve කරන්න බැරි නම් → user ට link එක යවන්න
+                    if (!resolved.ok) {
+                        await conn.sendMessage(from, { react: { text: "⚠️", key: dlMsg.key } });
 
+                        return conn.sendMessage(from, {
+                            text:
+                                `⚠️ *Direct download link එක නැහැ*\n\n` +
+                                `📌 *Movie:* ${movieTitle}\n` +
+                                `📊 *Quality:* ${label}\n\n` +
+                                `🔗 *Manual link:*\n${rawUrl}\n\n` +
+                                `_මේ link එක browser එකෙන් open කරන්න._\n` +
+                                `_Reason: ${resolved.error}_${footer}`
+                        }, { quoted: dlMsg });
+                    }
+
+                    // ✅ Resolved — send document
+                    const sizeMB = (resolved.size / 1024 / 1024).toFixed(2);
+                    console.log(`✅ Direct link resolved: ${sizeMB} MB`);
+
+                    const safeName = movieTitle.replace(/[^\w\s\-]/g, '').replace(/\s+/g, '_').trim().slice(0, 50);
+                    const safeQuality = label.replace(/[^\w\-]/g, '').replace(/\s+/g, '_').trim().slice(0, 30);
                     const fileName = `${safeName}_${safeQuality}.mp4`;
 
                     const docCaption =
                         `*🎬 ${movieTitle}*\n\n` +
                         `*📊 Quality* ➟ *${label}*\n` +
+                        `*💾 Size* ➟ *${sizeMB} MB*\n` +
                         `${footer}`;
 
-                    console.log(`📤 Sending: ${fileName}`);
-                    console.log(`🔗 URL: ${finalUrl}`);
-
                     await conn.sendMessage(from, {
-                        document: { url: finalUrl },
+                        document: { url: resolved.url },
                         mimetype: "video/mp4",
                         fileName: fileName,
                         jpegThumbnail: await getThumbnailBuffer(DEFAULT_THUMB),
@@ -211,7 +287,7 @@ cmd({
                     }, { quoted: dlMsg });
 
                     await conn.sendMessage(from, { react: { text: "✅", key: dlMsg.key } });
-                    console.log(`✅ Movie sent: ${movieTitle} [${label}]`);
+                    console.log(`✅ Movie sent: ${fileName} (${sizeMB} MB)`);
 
                 } catch (err) {
                     console.log(`❌ DL error: ${err.message}`);
@@ -235,9 +311,3 @@ cmd({
         await reply(`❌ Error: _${e.message}_${footer}`);
     }
 });
-
-
-
-
-
-
