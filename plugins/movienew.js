@@ -13,7 +13,7 @@ const { searchMovies, getMovieDetails, extractSlug, extractSiteFromItem } = requ
 if (!global.MOVIE_SEARCH_STATE) global.MOVIE_SEARCH_STATE = new Map();
 if (!global.MOVIE_DETAIL_STATE) global.MOVIE_DETAIL_STATE = new Map();
 
-const TIMEOUT = 10 * 60 * 1000; // 10 minutes
+const TIMEOUT = 10 * 60 * 1000;
 
 // ══════════════════════════════════════════════════════════════
 // 🎨 HELPERS
@@ -34,17 +34,18 @@ function fmtQuality(q) {
     if (s.includes('720')) return '💻 720p HD';
     if (s.includes('1080')) return '🖥️ 1080p FHD';
     if (s.includes('2160') || s.includes('4k')) return '🎞️ 4K UHD';
-    return `📺 ${q}`;
+    return '📺 ' + q;
 }
 
-function truncate(s, n = 500) {
+function truncate(s, n) {
+    n = n || 500;
     if (!s) return '';
     s = String(s).trim();
     return s.length > n ? s.slice(0, n) + '...' : s;
 }
 
 // ══════════════════════════════════════════════════════════════
-// 🎬 STEP 1: SEARCH COMMAND — .movie <name>
+// 🎬 STEP 1: SEARCH — .movie <name>
 // ══════════════════════════════════════════════════════════════
 cmd({
     pattern: 'movie',
@@ -62,21 +63,25 @@ async (conn, mek, m, { from, q, reply, sender, pushname }) => {
         const userName    = pushname || 'User';
 
         if (!q) {
-            return reply(
-                `╔══════════════════════════════════╗\n` +
-                `║   🎬  *MOVIE DOWNLOADER*  🎬\n` +
-                `╚══════════════════════════════════╝\n\n` +
-                `👋 Hello *${userName}*\n\n` +
-                `📌 *Usage:* \`.movie <name>\`\n\n` +
-                `💡 *Example:*\n`.movie deadpool\`\n`.movie avengers\`\n\n` +
-                `🎯 *How it works:*\n` +
-                `  1️⃣ Movie name type කරන්න\n` +
-                `  2️⃣ Result එකට අංකයක් reply කරන්න\n` +
-                `  3️⃣ Quality එකට අංකයක් reply කරන්න\n` +
-                `  4️⃣ Movie file එක ලැබෙනවා ✅\n\n` +
-                `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
-                `⚡ *${botName}* ⚡\n${description}`
-            );
+            const P = config.PREFIX || '.';
+            let help = '';
+            help += '╔══════════════════════════════════╗\n';
+            help += '║   🎬  *MOVIE DOWNLOADER*  🎬\n';
+            help += '╚══════════════════════════════════╝\n\n';
+            help += '👋 Hello *' + userName + '*\n\n';
+            help += '📌 *Usage:* `' + P + 'movie <name>`\n\n';
+            help += '💡 *Example:*\n';
+            help += '  `' + P + 'movie deadpool`\n';
+            help += '  `' + P + 'movie avengers`\n\n';
+            help += '🎯 *How it works:*\n';
+            help += '  1️⃣ Movie name type කරන්න\n';
+            help += '  2️⃣ Result එකට අංකයක් reply කරන්න\n';
+            help += '  3️⃣ Quality එකට අංකයක් reply කරන්න\n';
+            help += '  4️⃣ Movie file එක ලැබෙනවා ✅\n\n';
+            help += '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n';
+            help += '⚡ *' + botName + '* ⚡\n' + description;
+
+            return reply(help);
         }
 
         await conn.sendMessage(from, { react: { text: '⏳', key: mek.key } });
@@ -85,36 +90,35 @@ async (conn, mek, m, { from, q, reply, sender, pushname }) => {
 
         if (!results || !results.length) {
             await conn.sendMessage(from, { react: { text: '❌', key: mek.key } });
-            return reply(`❌ *No results found for:* \`${q}\``);
+            return reply('❌ *No results found for:* `' + q + '`');
         }
 
-        // Top 10 results
         const top = results.slice(0, 10);
 
-        let list = `╔══════════════════════════════════╗\n`;
-        list += `║   🎬  *MOVIE SEARCH RESULTS*  🎬\n`;
-        list += `╚══════════════════════════════════╝\n\n`;
-        list += `🔍 *Query:* \`${q}\`\n`;
-        list += `📊 *Found:* ${results.length} results\n\n`;
-        list += `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n`;
+        let list = '';
+        list += '╔══════════════════════════════════╗\n';
+        list += '║   🎬  *MOVIE SEARCH RESULTS*  🎬\n';
+        list += '╚══════════════════════════════════╝\n\n';
+        list += '🔍 *Query:* `' + q + '`\n';
+        list += '📊 *Found:* ' + results.length + ' results\n\n';
+        list += '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n';
 
         top.forEach((r, i) => {
             const title = r.title || r.name || 'Unknown';
             const year  = r.year || '';
             const site  = extractSiteFromItem(r);
-            list += `*${i + 1}.* 📽️ *${title}*\n`;
-            if (year) list += `     📅 ${year}\n`;
-            list += `     🌐 ${site}\n\n`;
+            list += '*' + (i + 1) + '.* 📽️ *' + title + '*\n';
+            if (year) list += '     📅 ' + year + '\n';
+            list += '     🌐 ' + site + '\n\n';
         });
 
-        list += `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n`;
-        list += `💬 *Reply with a number (1-${top.length})* to see movie details\n`;
-        list += `⏱️ _Expires in 10 minutes_\n\n`;
-        list += `⚡ *${botName}* ⚡\n${description}`;
+        list += '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n';
+        list += '💬 *Reply with a number (1-' + top.length + ')* to see movie details\n';
+        list += '⏱️ _Expires in 10 minutes_\n\n';
+        list += '⚡ *' + botName + '* ⚡\n' + description;
 
         const sent = await conn.sendMessage(from, { text: list }, { quoted: mek });
 
-        // Save state
         global.MOVIE_SEARCH_STATE.set(from, {
             msgId: sent.key.id,
             results: top,
@@ -122,7 +126,6 @@ async (conn, mek, m, { from, q, reply, sender, pushname }) => {
             query: q
         });
 
-        // Auto-expire
         setTimeout(() => {
             const s = global.MOVIE_SEARCH_STATE.get(from);
             if (s && s.msgId === sent.key.id && Date.now() - s.timestamp >= TIMEOUT) {
@@ -131,17 +134,17 @@ async (conn, mek, m, { from, q, reply, sender, pushname }) => {
         }, TIMEOUT);
 
         await conn.sendMessage(from, { react: { text: '✅', key: mek.key } });
-        console.log(`✅ Search sent: ${q} (${top.length} results)`);
+        console.log('✅ Search sent: ' + q + ' (' + top.length + ' results)');
 
     } catch (e) {
         console.error('❌ Search error:', e.message);
         await conn.sendMessage(from, { react: { text: '❌', key: mek.key } });
-        try { await reply(`❌ *Search failed:* ${e.message}`); } catch (e2) {}
+        try { await reply('❌ *Search failed:* ' + e.message); } catch (e2) {}
     }
 });
 
 // ══════════════════════════════════════════════════════════════
-// 🎯 STEP 2 & 3: BODY HANDLER
+// 🎯 STEP 2 & 3: BODY HANDLER (reply catch)
 // ══════════════════════════════════════════════════════════════
 cmd({
     pattern: 'moviecatch',
@@ -156,34 +159,31 @@ async (conn, mek, m, { from, body, sender, reply }) => {
         const num = parseInt(text);
         if (isNaN(num) || num < 1) return;
 
-        const quotedId = mek.message?.extendedTextMessage?.contextInfo?.stanzaId;
+        const quotedId = mek.message && mek.message.extendedTextMessage
+            && mek.message.extendedTextMessage.contextInfo
+            && mek.message.extendedTextMessage.contextInfo.stanzaId;
+
         if (!quotedId) return;
 
-        // ══════════════════════════════════════════════════════════════
-        // 🎬 STEP 2: User picked a search result → show details card
-        // ══════════════════════════════════════════════════════════════
+        // STEP 2
         const searchState = global.MOVIE_SEARCH_STATE.get(from);
         if (searchState && searchState.msgId === quotedId) {
             const idx = num - 1;
             if (idx < 0 || idx >= searchState.results.length) {
-                return reply(`❌ Invalid number. Please reply with 1-${searchState.results.length}`);
+                return reply('❌ Invalid number. Please reply with 1-' + searchState.results.length);
             }
-
             const picked = searchState.results[idx];
             await handleMovieDetails(conn, mek, from, sender, picked);
             return;
         }
 
-        // ══════════════════════════════════════════════════════════════
-        // 📥 STEP 3: User picked a quality → download & send file
-        // ══════════════════════════════════════════════════════════════
+        // STEP 3
         const detailState = global.MOVIE_DETAIL_STATE.get(from);
         if (detailState && detailState.msgId === quotedId) {
             const idx = num - 1;
             if (idx < 0 || idx >= detailState.downloads.length) {
-                return reply(`❌ Invalid number. Please reply with 1-${detailState.downloads.length}`);
+                return reply('❌ Invalid number. Please reply with 1-' + detailState.downloads.length);
             }
-
             const link = detailState.downloads[idx];
             await handleDownload(conn, mek, from, sender, link, detailState.title);
             return;
@@ -195,7 +195,7 @@ async (conn, mek, m, { from, body, sender, reply }) => {
 });
 
 // ══════════════════════════════════════════════════════════════
-// 🎬 HANDLE DETAILS CARD (STEP 2)
+// 🎬 HANDLE DETAILS (STEP 2)
 // ══════════════════════════════════════════════════════════════
 async function handleMovieDetails(conn, mek, from, sender, picked) {
     const botName     = config.BOT_NAME || 'PATHUMTECH MD';
@@ -213,13 +213,8 @@ async function handleMovieDetails(conn, mek, from, sender, picked) {
         const movie     = apiData.movie || apiData.data || apiData;
         const downloads = apiData.downloads || movie.downloads || apiData.links || [];
 
-        if (!downloads.length) {
-            throw new Error('No download links available');
-        }
+        if (!downloads.length) throw new Error('No download links available');
 
-        // ══════════════════════════════════════════════════════════════
-        // 🎨 BUILD CARD
-        // ══════════════════════════════════════════════════════════════
         const title    = movie.title || picked.title || 'Unknown';
         const year     = movie.year || picked.year || '';
         const rating   = movie.imdb || movie.rating || movie.imdb_rating || '';
@@ -232,88 +227,78 @@ async function handleMovieDetails(conn, mek, from, sender, picked) {
         const plot     = movie.plot || movie.description || movie.story || '';
 
         let card = '';
-        card += `╔══════════════════════════════════╗\n`;
-        card += `║   🎬  *MOVIE DETAILS*  🎬\n`;
-        card += `╚══════════════════════════════════╝\n\n`;
-        card += `📽️ *${title}*\n\n`;
+        card += '╔══════════════════════════════════╗\n';
+        card += '║   🎬  *MOVIE DETAILS*  🎬\n';
+        card += '╚══════════════════════════════════╝\n\n';
+        card += '📽️ *' + title + '*\n\n';
 
-        card += `┏━━━━━━━━━━━━━━━━━━━━━━━━━━━┓\n`;
-        card += `┃  📊  *INFORMATION*\n`;
-        card += `┗━━━━━━━━━━━━━━━━━━━━━━━━━━━┛\n`;
-        if (year)     card += `  📅 *Year:* \`${year}\`\n`;
-        if (rating)   card += `  ⭐ *IMDb:* \`${rating}/10\`\n`;
-        if (duration) card += `  ⏱️ *Duration:* \`${duration}\`\n`;
-        if (lang)     card += `  🗣️ *Language:* \`${lang}\`\n`;
-        if (country)  card += `  🌍 *Country:* \`${country}\`\n`;
-        if (genres)   card += `  🎭 *Genres:* \`${genres}\`\n`;
-        card += `\n`;
+        card += '┏━━━━━━━━━━━━━━━━━━━━━━━━━━━┓\n';
+        card += '┃  📊  *INFORMATION*\n';
+        card += '┗━━━━━━━━━━━━━━━━━━━━━━━━━━━┛\n';
+        if (year)     card += '  📅 *Year:* `' + year + '`\n';
+        if (rating)   card += '  ⭐ *IMDb:* `' + rating + '/10`\n';
+        if (duration) card += '  ⏱️ *Duration:* `' + duration + '`\n';
+        if (lang)     card += '  🗣️ *Language:* `' + lang + '`\n';
+        if (country)  card += '  🌍 *Country:* `' + country + '`\n';
+        if (genres)   card += '  🎭 *Genres:* `' + genres + '`\n';
+        card += '\n';
 
         if (director) {
-            card += `┏━━━━━━━━━━━━━━━━━━━━━━━━━━━┓\n`;
-            card += `┃  🎥  *DIRECTOR*\n`;
-            card += `┗━━━━━━━━━━━━━━━━━━━━━━━━━━━┛\n`;
-            card += `  👤 ${director}\n\n`;
+            card += '┏━━━━━━━━━━━━━━━━━━━━━━━━━━━┓\n';
+            card += '┃  🎥  *DIRECTOR*\n';
+            card += '┗━━━━━━━━━━━━━━━━━━━━━━━━━━━┛\n';
+            card += '  👤 ' + director + '\n\n';
         }
 
         if (cast) {
-            card += `┏━━━━━━━━━━━━━━━━━━━━━━━━━━━┓\n`;
-            card += `┃  ⭐  *MAIN CAST*\n`;
-            card += `┗━━━━━━━━━━━━━━━━━━━━━━━━━━━┛\n`;
-            card += `  🎭 ${cast}\n\n`;
+            card += '┏━━━━━━━━━━━━━━━━━━━━━━━━━━━┓\n';
+            card += '┃  ⭐  *MAIN CAST*\n';
+            card += '┗━━━━━━━━━━━━━━━━━━━━━━━━━━━┛\n';
+            card += '  🎭 ' + cast + '\n\n';
         }
 
         if (plot) {
-            card += `┏━━━━━━━━━━━━━━━━━━━━━━━━━━━┓\n`;
-            card += `┃  📖  *STORY*\n`;
-            card += `┗━━━━━━━━━━━━━━━━━━━━━━━━━━━┛\n`;
-            card += `  ${truncate(plot, 500)}\n\n`;
+            card += '┏━━━━━━━━━━━━━━━━━━━━━━━━━━━┓\n';
+            card += '┃  📖  *STORY*\n';
+            card += '┗━━━━━━━━━━━━━━━━━━━━━━━━━━━┛\n';
+            card += '  ' + truncate(plot, 500) + '\n\n';
         }
 
-        // ══════════════════════════════════════════════════════════════
-        // 📥 DOWNLOAD OPTIONS (numbered)
-        // ══════════════════════════════════════════════════════════════
-        card += `┏━━━━━━━━━━━━━━━━━━━━━━━━━━━┓\n`;
-        card += `┃  📥  *DOWNLOAD OPTIONS*\n`;
-        card += `┗━━━━━━━━━━━━━━━━━━━━━━━━━━━┛\n\n`;
+        card += '┏━━━━━━━━━━━━━━━━━━━━━━━━━━━┓\n';
+        card += '┃  📥  *DOWNLOAD OPTIONS*\n';
+        card += '┗━━━━━━━━━━━━━━━━━━━━━━━━━━━┛\n\n';
 
         const cleanDownloads = downloads.slice(0, 10);
         cleanDownloads.forEach((d, i) => {
             const q = d.quality || d.quality_label || d.label || d.resolution || 'Unknown';
             const size = fmtSize(d.size || d.file_size || d.filesize || '');
             const prov = d.provider || d.host || d.server || 'Direct';
-            card += `*${i + 1}.* ${fmtQuality(q)}\n`;
-            card += `     💾 Size: \`${size}\`\n`;
-            card += `     🔗 ${prov}\n\n`;
+            card += '*' + (i + 1) + '.* ' + fmtQuality(q) + '\n';
+            card += '     💾 Size: `' + size + '`\n';
+            card += '     🔗 ' + prov + '\n\n';
         });
 
-        card += `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n`;
-        card += `💬 *Reply with a number (1-${cleanDownloads.length})* to download\n`;
-        card += `⏱️ _Expires in 10 minutes_\n\n`;
-        card += `⚡ *${botName}* ⚡\n${description}`;
+        card += '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n';
+        card += '💬 *Reply with a number (1-' + cleanDownloads.length + ')* to download\n';
+        card += '⏱️ _Expires in 10 minutes_\n\n';
+        card += '⚡ *' + botName + '* ⚡\n' + description;
 
-        // Send with poster
         const poster = movie.poster || movie.image || movie.thumbnail || picked.thumbnail || picked.image || '';
-        const contextInfo = {
-            mentionedJid: [sender],
-            forwardingScore: 999,
-            isForwarded: true
-        };
 
         let sent;
         if (poster && poster.startsWith('http')) {
             try {
                 sent = await conn.sendMessage(from, {
-                    image: { url: poster }, caption: card, contextInfo
+                    image: { url: poster }, caption: card
                 }, { quoted: mek });
             } catch (e) {
                 console.log('⚠️ Poster failed:', e.message);
-                sent = await conn.sendMessage(from, { text: card, contextInfo }, { quoted: mek });
+                sent = await conn.sendMessage(from, { text: card }, { quoted: mek });
             }
         } else {
-            sent = await conn.sendMessage(from, { text: card, contextInfo }, { quoted: mek });
+            sent = await conn.sendMessage(from, { text: card }, { quoted: mek });
         }
 
-        // Save detail state
         global.MOVIE_DETAIL_STATE.set(from, {
             msgId: sent.key.id,
             downloads: cleanDownloads,
@@ -329,12 +314,11 @@ async function handleMovieDetails(conn, mek, from, sender, picked) {
         }, TIMEOUT);
 
         await conn.sendMessage(from, { react: { text: '✅', key: mek.key } });
-        console.log(`✅ Details sent: ${title} (${cleanDownloads.length} qualities)`);
 
     } catch (e) {
         console.error('❌ Details error:', e.message);
         await conn.sendMessage(from, { react: { text: '❌', key: mek.key } });
-        try { await reply(`❌ *Failed:* ${e.message}`); } catch (e2) {}
+        try { await reply('❌ *Failed:* ' + e.message); } catch (e2) {}
     }
 }
 
@@ -352,57 +336,51 @@ async function handleDownload(conn, mek, from, sender, link, movieTitle) {
         const quality = link.quality || link.quality_label || link.label || 'Unknown';
         const size    = fmtSize(link.size || link.file_size || '');
         const cleanTitle = String(movieTitle).replace(/[^\w\s\-\.]/g, '').replace(/\s+/g, '.').slice(0, 60);
-        const fileName = `${cleanTitle}.${quality}.mp4`;
+        const fileName = cleanTitle + '.' + quality + '.mp4';
 
         await conn.sendMessage(from, { react: { text: '⬇️', key: mek.key } });
 
         const progressMsg = await conn.sendMessage(from, {
             text:
-                `╔════════════════════════════╗\n` +
-                `║   📥  *DOWNLOADING...*\n` +
-                `╚════════════════════════════╝\n\n` +
-                `🎬 *${movieTitle}*\n` +
-                `🎞️ Quality: \`${quality}\`\n` +
-                `💾 Size: \`${size}\`\n\n` +
-                `⏳ _Please wait — file upload වෙනවා_\n\n` +
-                `⚡ *${botName}* ⚡`
+                '╔════════════════════════════════╗\n' +
+                '║   📥  *DOWNLOADING...*\n' +
+                '╚════════════════════════════════╝\n\n' +
+                '🎬 *' + movieTitle + '*\n' +
+                '🎞️ Quality: `' + quality + '`\n' +
+                '💾 Size: `' + size + '`\n\n' +
+                '⏳ _Please wait..._\n\n' +
+                '⚡ *' + botName + '* ⚡'
         }, { quoted: mek });
 
-        // ══════════════════════════════════════════════════════════════
-        // Send as document
-        // ══════════════════════════════════════════════════════════════
         await conn.sendMessage(from, {
             document: { url: url },
             mimetype: 'video/mp4',
             fileName: fileName,
             caption:
-                `╔════════════════════════════════╗\n` +
-                `║   ✅  *MOVIE DOWNLOADED*\n` +
-                `╚════════════════════════════════╝\n\n` +
-                `🎬 *${movieTitle}*\n` +
-                `🎞️ Quality: \`${quality}\`\n` +
-                `💾 Size: \`${size}\`\n\n` +
-                `━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
-                `⚡ *${botName}* ⚡\n${description}`
+                '╔════════════════════════════════╗\n' +
+                '║   ✅  *MOVIE DOWNLOADED*\n' +
+                '╚════════════════════════════════╝\n\n' +
+                '🎬 *' + movieTitle + '*\n' +
+                '🎞️ Quality: `' + quality + '`\n' +
+                '💾 Size: `' + size + '`\n\n' +
+                '━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n' +
+                '⚡ *' + botName + '* ⚡\n' + description
         }, { quoted: mek });
 
-        // Delete progress
         try { await conn.sendMessage(from, { delete: progressMsg.key }); } catch (e) {}
 
         await conn.sendMessage(from, { react: { text: '✅', key: mek.key } });
-        console.log(`✅ Movie sent: ${movieTitle} — ${quality}`);
 
     } catch (e) {
         console.error('❌ Download error:', e.message);
         await conn.sendMessage(from, { react: { text: '❌', key: mek.key } });
         try {
             await reply(
-                `❌ *Download failed!*\n\n` +
-                `📛 Error: \`${e.message.slice(0, 200)}\`\n\n` +
-                `💡 Tips:\n` +
-                `• Link එක expire වෙලා වෙන්න පුළුවන්\n` +
-                `• ආයෙ try කරන්න\n` +
-                `• වෙන quality එකක් try කරන්න`
+                '❌ *Download failed!*\n\n' +
+                '📛 Error: `' + e.message.slice(0, 200) + '`\n\n' +
+                '💡 Tips:\n' +
+                '• Link එක expire වෙලා වෙන්න පුළුවන්\n' +
+                '• ආයෙ try කරන්න'
             );
         } catch (e2) {}
     }
