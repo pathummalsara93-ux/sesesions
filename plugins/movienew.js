@@ -1,313 +1,409 @@
 /*  ██████╗  █████╗ ████████╗██╗  ██╗██╗   ██╗███╗   ███╗
     ⚡ PATHUMTECH MD © PathumTech — DO NOT REMOVE 🛡️ */
 
+'use strict';
+
 const { cmd } = require('../command');
-const axios = require('axios');
-const sharp = require('sharp');
-const scraper = require('liyanaarachchi-sinhalasub-scraper-v2');
-
-const userDownloads = new Map();
+const config = require('../config');
+const { searchMovies, getMovieDetails, extractSlug, extractSiteFromItem } = require('../lib/luxalgo-api');
 
 // ══════════════════════════════════════════════════════════════
-// 🔧 THUMBNAIL BUFFER
+// 🗂️ STATE MAPS
 // ══════════════════════════════════════════════════════════════
-async function getThumbnailBuffer(url) {
-    if (!url) return null;
-    try {
-        const { data } = await axios.get(url, {
-            responseType: "arraybuffer",
-            timeout: 10000
-        });
-        return await sharp(data).resize(300, 300).jpeg({ quality: 80 }).toBuffer();
-    } catch {
-        return null;
-    }
+if (!global.MOVIE_SEARCH_STATE) global.MOVIE_SEARCH_STATE = new Map();
+if (!global.MOVIE_DETAIL_STATE) global.MOVIE_DETAIL_STATE = new Map();
+
+const TIMEOUT = 10 * 60 * 1000; // 10 minutes
+
+// ══════════════════════════════════════════════════════════════
+// 🎨 HELPERS
+// ══════════════════════════════════════════════════════════════
+function fmtSize(bytes) {
+    if (!bytes) return 'N/A';
+    if (typeof bytes === 'string' && /[KMGT]B/i.test(bytes)) return bytes;
+    const n = parseInt(bytes);
+    if (!n || isNaN(n)) return String(bytes);
+    const k = 1024, sizes = ['B', 'KB', 'MB', 'GB', 'TB'];
+    const i = Math.floor(Math.log(n) / Math.log(k));
+    return (n / Math.pow(k, i)).toFixed(2) + ' ' + sizes[i];
+}
+
+function fmtQuality(q) {
+    const s = String(q).toLowerCase();
+    if (s.includes('480')) return '📱 480p SD';
+    if (s.includes('720')) return '💻 720p HD';
+    if (s.includes('1080')) return '🖥️ 1080p FHD';
+    if (s.includes('2160') || s.includes('4k')) return '🎞️ 4K UHD';
+    return `📺 ${q}`;
+}
+
+function truncate(s, n = 500) {
+    if (!s) return '';
+    s = String(s).trim();
+    return s.length > n ? s.slice(0, n) + '...' : s;
 }
 
 // ══════════════════════════════════════════════════════════════
-// 🔍 RESOLVE DOWNLOAD URL — follow redirects & verify content
-// ══════════════════════════════════════════════════════════════
-async function resolveDownloadUrl(url) {
-    try {
-        console.log(`🔍 Resolving: ${url}`);
-
-        // ⭐ HEAD request — content-type + size check
-        const headRes = await axios({
-            method: 'HEAD',
-            url: url,
-            timeout: 15000,
-            maxRedirects: 10,   // ⭐ Follow redirects!
-            headers: {
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
-            },
-            validateStatus: () => true
-        });
-
-        const contentType = headRes.headers['content-type'] || '';
-        const contentLength = parseInt(headRes.headers['content-length'] || '0');
-        const finalUrl = headRes.request?.res?.responseUrl || url;
-
-        console.log(`📋 Content-Type: ${contentType}`);
-        console.log(`📦 Size: ${(contentLength / 1024 / 1024).toFixed(2)} MB`);
-        console.log(`🔗 Final URL: ${finalUrl}`);
-
-        // ✅ Real video file
-        if (contentType.includes('video/') || contentType.includes('application/octet-stream')) {
-            if (contentLength > 1024 * 1024) {   // > 1 MB
-                return { ok: true, url: finalUrl, size: contentLength, type: contentType };
-            }
-            return { ok: false, error: `File too small: ${(contentLength / 1024).toFixed(0)} KB`, url: finalUrl };
-        }
-
-        // ❌ HTML page — try to extract real link
-        if (contentType.includes('text/html')) {
-            console.log('⚠️ HTML page detected — extracting real link...');
-
-            const pageRes = await axios.get(finalUrl, {
-                timeout: 15000,
-                maxRedirects: 10,
-                headers: {
-                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
-                }
-            });
-
-            const html = pageRes.data;
-
-            // Extract meta refresh, direct links
-            const patterns = [
-                /<meta[^>]+http-equiv=["']refresh["'][^>]+content=["'][^"']*url=([^"'\s>]+)/i,
-                /(https?:\/\/[^\s"'<>]+\.(?:mp4|mkv|avi|mov)[^\s"'<>]*)/i,
-                /(https?:\/\/[^\s"'<>]*drive\.google\.com[^\s"'<>]*)/i,
-                /(https?:\/\/[^\s"'<>]*mega\.nz[^\s"'<>]*)/i,
-                /(https?:\/\/[^\s"'<>]*pixeldrain\.com[^\s"'<>]*)/i,
-                /(https?:\/\/[^\s"'<>]*mediafire\.com[^\s"'<>]*)/i,
-                /window\.location\.href\s*=\s*["']([^"']+)["']/i,
-                /location\.replace\(["']([^"']+)["']\)/i
-            ];
-
-            for (const pattern of patterns) {
-                const match = html.match(pattern);
-                if (match && match[1]) {
-                    const extracted = match[1].replace(/&amp;/g, '&');
-                    console.log(`✅ Extracted: ${extracted}`);
-                    if (extracted !== url && extracted.startsWith('http')) {
-                        // Recursively resolve
-                        return await resolveDownloadUrl(extracted);
-                    }
-                }
-            }
-
-            return { ok: false, error: 'Could not extract video link from HTML page', url: finalUrl };
-        }
-
-        // ⚠️ Unknown content-type — but might still be video
-        if (contentLength > 1024 * 1024) {
-            return { ok: true, url: finalUrl, size: contentLength, type: contentType };
-        }
-
-        return { ok: false, error: `Unsupported: ${contentType}`, url: finalUrl };
-
-    } catch (e) {
-        console.log(`❌ Resolve error: ${e.message}`);
-        return { ok: false, error: e.message, url };
-    }
-}
-
-// ══════════════════════════════════════════════════════════════
-// 🎬 MOVIE COMMAND
+// 🎬 STEP 1: SEARCH COMMAND — .movie <name>
 // ══════════════════════════════════════════════════════════════
 cmd({
-    pattern: "movie",
-    alias: ["ssub", "sinhalasubtitle", "film"],
-    desc: "Download Sinhala subtitled movies",
-    category: "download",
-    react: "🎬",
+    pattern: 'movie',
+    alias: ['mv', 'film', 'moviesearch'],
+    react: '🎬',
+    desc: 'Search movie & download',
+    category: 'download',
+    use: '.movie <name>',
     filename: __filename
-}, async (conn, mek, m, { from, args, reply, sender }) => {
-
-    const footer = "\n\n🅻.🆃 𝐅𝐈𝐋𝐌 𝐇𝐔𝐁 ᵀⱽ ˢᵉʳⁱᵉˢ🎞️";
-    const DEFAULT_THUMB = "https://files.catbox.moe/knn0ft.jpg";
-
-    const query = args.join(" ").trim();
-    if (!query) {
-        return reply(`🎬 Please provide a movie name!\n\nExample: .movie Deadpool${footer}`);
-    }
-
+},
+async (conn, mek, m, { from, q, reply, sender, pushname }) => {
     try {
-        await conn.sendMessage(from, { react: { text: "🔍", key: mek.key } });
+        const botName     = config.BOT_NAME || 'PATHUMTECH MD';
+        const description = config.DESCRIPTION || '> © Powered by PathumTech 🖤';
+        const userName    = pushname || 'User';
 
-        // ─────── 🔍 SEARCH ───────
-        console.log(`🔍 Searching: ${query}`);
-        const results = await scraper.searchSinhalaSub(query);
-
-        if (!results || !Array.isArray(results) || results.length === 0) {
-            await conn.sendMessage(from, { react: { text: "❌", key: mek.key } });
-            return reply(`❌ No movies found for: *${query}*${footer}`);
+        if (!q) {
+            return reply(
+                `╔══════════════════════════════════╗\n` +
+                `║   🎬  *MOVIE DOWNLOADER*  🎬\n` +
+                `╚══════════════════════════════════╝\n\n` +
+                `👋 Hello *${userName}*\n\n` +
+                `📌 *Usage:* \`.movie <name>\`\n\n` +
+                `💡 *Example:*\n`.movie deadpool\`\n`.movie avengers\`\n\n` +
+                `🎯 *How it works:*\n` +
+                `  1️⃣ Movie name type කරන්න\n` +
+                `  2️⃣ Result එකට අංකයක් reply කරන්න\n` +
+                `  3️⃣ Quality එකට අංකයක් reply කරන්න\n` +
+                `  4️⃣ Movie file එක ලැබෙනවා ✅\n\n` +
+                `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
+                `⚡ *${botName}* ⚡\n${description}`
+            );
         }
 
-        let list = `〽️ *SINHALASUB SEARCH*\n\n🔎 ${query.toUpperCase()}\n\n`;
-        results.slice(0, 10).forEach((v, i) => {
-            list += `☣️${i + 1}❭❭⚬ ${(v.title || 'Unknown').split("|")[0].trim()}\n`;
+        await conn.sendMessage(from, { react: { text: '⏳', key: mek.key } });
+
+        const results = await searchMovies(q.trim());
+
+        if (!results || !results.length) {
+            await conn.sendMessage(from, { react: { text: '❌', key: mek.key } });
+            return reply(`❌ *No results found for:* \`${q}\``);
+        }
+
+        // Top 10 results
+        const top = results.slice(0, 10);
+
+        let list = `╔══════════════════════════════════╗\n`;
+        list += `║   🎬  *MOVIE SEARCH RESULTS*  🎬\n`;
+        list += `╚══════════════════════════════════╝\n\n`;
+        list += `🔍 *Query:* \`${q}\`\n`;
+        list += `📊 *Found:* ${results.length} results\n\n`;
+        list += `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n`;
+
+        top.forEach((r, i) => {
+            const title = r.title || r.name || 'Unknown';
+            const year  = r.year || '';
+            const site  = extractSiteFromItem(r);
+            list += `*${i + 1}.* 📽️ *${title}*\n`;
+            if (year) list += `     📅 ${year}\n`;
+            list += `     🌐 ${site}\n\n`;
         });
-        list += `\nReply with number${footer}`;
 
-        const sent = await conn.sendMessage(from, {
-            image: { url: DEFAULT_THUMB },
-            caption: list
-        }, { quoted: mek });
-        const searchMsgId = sent.key.id;
+        list += `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n`;
+        list += `💬 *Reply with a number (1-${top.length})* to see movie details\n`;
+        list += `⏱️ _Expires in 10 minutes_\n\n`;
+        list += `⚡ *${botName}* ⚡\n${description}`;
 
-        // ═══════════════════════════════════════════════════
-        // 🔁 SEARCH SELECTION
-        // ═══════════════════════════════════════════════════
-        const searchHandler = async (msgUpdate) => {
-            const upmsg = msgUpdate.messages[0];
-            if (!upmsg.message || upmsg.key.remoteJid !== from) return;
+        const sent = await conn.sendMessage(from, { text: list }, { quoted: mek });
 
-            const body = upmsg.message.conversation || upmsg.message.extendedTextMessage?.text;
-            const ctx = upmsg.message.extendedTextMessage?.contextInfo;
-            if (ctx?.stanzaId !== searchMsgId) return;
+        // Save state
+        global.MOVIE_SEARCH_STATE.set(from, {
+            msgId: sent.key.id,
+            results: top,
+            timestamp: Date.now(),
+            query: q
+        });
 
-            conn.ev.off("messages.upsert", searchHandler);
-
-            const num = parseInt(body);
-            const selected = results[num - 1];
-            if (!selected) {
-                return conn.sendMessage(from, { text: `❎ Invalid number${footer}` }, { quoted: upmsg });
+        // Auto-expire
+        setTimeout(() => {
+            const s = global.MOVIE_SEARCH_STATE.get(from);
+            if (s && s.msgId === sent.key.id && Date.now() - s.timestamp >= TIMEOUT) {
+                global.MOVIE_SEARCH_STATE.delete(from);
             }
+        }, TIMEOUT);
 
-            await conn.sendMessage(from, { react: { text: "📑", key: upmsg.key } });
-
-            const movieTitle = (selected.title || 'Movie').split("|")[0].trim();
-            const movieUrl = selected.link;
-
-            // ─────── 📥 GET DOWNLOAD LINKS ───────
-            let downloadLinks;
-            try {
-                downloadLinks = await scraper.getMovieLinks(movieUrl);
-            } catch (e) {
-                await conn.sendMessage(from, { react: { text: "❌", key: upmsg.key } });
-                return conn.sendMessage(from, {
-                    text: `❌ *Failed to get links*\n\n_${e.message}_${footer}`
-                }, { quoted: upmsg });
-            }
-
-            if (!downloadLinks || !downloadLinks.length) {
-                await conn.sendMessage(from, { react: { text: "❌", key: upmsg.key } });
-                return conn.sendMessage(from, {
-                    text: `❌ *No download links found*${footer}`
-                }, { quoted: upmsg });
-            }
-
-            // ─────── 📋 QUALITY LIST ───────
-            let qualityMsg = `📥 *Select Quality to Download:*\n\n`;
-            downloadLinks.forEach((d, i) => {
-                qualityMsg += `*${i + 1}* ☛ ${d.label || d.quality || `Option ${i + 1}`}\n`;
-            });
-            qualityMsg += `\nReply with number${footer}`;
-
-            const sentQuality = await conn.sendMessage(from, { text: qualityMsg }, { quoted: upmsg });
-            const qualityMsgId = sentQuality.key.id;
-
-            // ═══════════════════════════════════════════════════
-            // 🔽 DOWNLOAD HANDLER
-            // ═══════════════════════════════════════════════════
-            const dlHandler = async (dlUpdate) => {
-                const dlMsg = dlUpdate.messages[0];
-                if (!dlMsg.message || dlMsg.key.remoteJid !== from) return;
-
-                const dlBody = dlMsg.message.conversation || dlMsg.message.extendedTextMessage?.text;
-                const dlCtx = dlMsg.message.extendedTextMessage?.contextInfo;
-                if (dlCtx?.stanzaId !== qualityMsgId) return;
-
-                conn.ev.off("messages.upsert", dlHandler);
-
-                const idx = parseInt(dlBody);
-                const target = downloadLinks[idx - 1];
-                if (!target) {
-                    return conn.sendMessage(from, { text: `❎ Invalid selection${footer}` }, { quoted: dlMsg });
-                }
-
-                if (userDownloads.get(from)) {
-                    return conn.sendMessage(from, { text: `⏳ Another download running...${footer}` }, { quoted: dlMsg });
-                }
-
-                userDownloads.set(from, true);
-                await conn.sendMessage(from, { react: { text: "⏳", key: dlMsg.key } });
-                await conn.sendMessage(from, {
-                    text: `🔍 *Resolving download link...*`
-                }, { quoted: dlMsg });
-
-                try {
-                    const rawUrl = target.link || target.url || target.download;
-                    const label = target.label || target.quality || 'Unknown';
-
-                    if (!rawUrl || !rawUrl.startsWith('http')) {
-                        throw new Error('Invalid URL from scraper');
-                    }
-
-                    // ⭐ RESOLVE — redirects + verify
-                    const resolved = await resolveDownloadUrl(rawUrl);
-
-                    // ❌ Link එක resolve කරන්න බැරි නම් → user ට link එක යවන්න
-                    if (!resolved.ok) {
-                        await conn.sendMessage(from, { react: { text: "⚠️", key: dlMsg.key } });
-
-                        return conn.sendMessage(from, {
-                            text:
-                                `⚠️ *Direct download link එක නැහැ*\n\n` +
-                                `📌 *Movie:* ${movieTitle}\n` +
-                                `📊 *Quality:* ${label}\n\n` +
-                                `🔗 *Manual link:*\n${rawUrl}\n\n` +
-                                `_මේ link එක browser එකෙන් open කරන්න._\n` +
-                                `_Reason: ${resolved.error}_${footer}`
-                        }, { quoted: dlMsg });
-                    }
-
-                    // ✅ Resolved — send document
-                    const sizeMB = (resolved.size / 1024 / 1024).toFixed(2);
-                    console.log(`✅ Direct link resolved: ${sizeMB} MB`);
-
-                    const safeName = movieTitle.replace(/[^\w\s\-]/g, '').replace(/\s+/g, '_').trim().slice(0, 50);
-                    const safeQuality = label.replace(/[^\w\-]/g, '').replace(/\s+/g, '_').trim().slice(0, 30);
-                    const fileName = `${safeName}_${safeQuality}.mp4`;
-
-                    const docCaption =
-                        `*🎬 ${movieTitle}*\n\n` +
-                        `*📊 Quality* ➟ *${label}*\n` +
-                        `*💾 Size* ➟ *${sizeMB} MB*\n` +
-                        `${footer}`;
-
-                    await conn.sendMessage(from, {
-                        document: { url: resolved.url },
-                        mimetype: "video/mp4",
-                        fileName: fileName,
-                        jpegThumbnail: await getThumbnailBuffer(DEFAULT_THUMB),
-                        caption: docCaption
-                    }, { quoted: dlMsg });
-
-                    await conn.sendMessage(from, { react: { text: "✅", key: dlMsg.key } });
-                    console.log(`✅ Movie sent: ${fileName} (${sizeMB} MB)`);
-
-                } catch (err) {
-                    console.log(`❌ DL error: ${err.message}`);
-                    await conn.sendMessage(from, { react: { text: "❌", key: dlMsg.key } });
-                    await conn.sendMessage(from, {
-                        text: `❌ *Download failed*\n\n_${err.message}_${footer}`
-                    }, { quoted: dlMsg });
-                } finally {
-                    userDownloads.delete(from);
-                }
-            };
-
-            conn.ev.on("messages.upsert", dlHandler);
-        };
-
-        conn.ev.on("messages.upsert", searchHandler);
+        await conn.sendMessage(from, { react: { text: '✅', key: mek.key } });
+        console.log(`✅ Search sent: ${q} (${top.length} results)`);
 
     } catch (e) {
-        console.log(`❌ Movie plugin error: ${e.message}`);
-        await conn.sendMessage(from, { react: { text: "❌", key: mek.key } });
-        await reply(`❌ Error: _${e.message}_${footer}`);
+        console.error('❌ Search error:', e.message);
+        await conn.sendMessage(from, { react: { text: '❌', key: mek.key } });
+        try { await reply(`❌ *Search failed:* ${e.message}`); } catch (e2) {}
     }
 });
+
+// ══════════════════════════════════════════════════════════════
+// 🎯 STEP 2 & 3: BODY HANDLER
+// ══════════════════════════════════════════════════════════════
+cmd({
+    pattern: 'moviecatch',
+    dontAddCommandList: true,
+    on: 'body'
+},
+async (conn, mek, m, { from, body, sender, reply }) => {
+    try {
+        const text = (body || '').trim();
+        if (!text) return;
+
+        const num = parseInt(text);
+        if (isNaN(num) || num < 1) return;
+
+        const quotedId = mek.message?.extendedTextMessage?.contextInfo?.stanzaId;
+        if (!quotedId) return;
+
+        // ══════════════════════════════════════════════════════════════
+        // 🎬 STEP 2: User picked a search result → show details card
+        // ══════════════════════════════════════════════════════════════
+        const searchState = global.MOVIE_SEARCH_STATE.get(from);
+        if (searchState && searchState.msgId === quotedId) {
+            const idx = num - 1;
+            if (idx < 0 || idx >= searchState.results.length) {
+                return reply(`❌ Invalid number. Please reply with 1-${searchState.results.length}`);
+            }
+
+            const picked = searchState.results[idx];
+            await handleMovieDetails(conn, mek, from, sender, picked);
+            return;
+        }
+
+        // ══════════════════════════════════════════════════════════════
+        // 📥 STEP 3: User picked a quality → download & send file
+        // ══════════════════════════════════════════════════════════════
+        const detailState = global.MOVIE_DETAIL_STATE.get(from);
+        if (detailState && detailState.msgId === quotedId) {
+            const idx = num - 1;
+            if (idx < 0 || idx >= detailState.downloads.length) {
+                return reply(`❌ Invalid number. Please reply with 1-${detailState.downloads.length}`);
+            }
+
+            const link = detailState.downloads[idx];
+            await handleDownload(conn, mek, from, sender, link, detailState.title);
+            return;
+        }
+
+    } catch (e) {
+        console.error('❌ moviecatch error:', e.message);
+    }
+});
+
+// ══════════════════════════════════════════════════════════════
+// 🎬 HANDLE DETAILS CARD (STEP 2)
+// ══════════════════════════════════════════════════════════════
+async function handleMovieDetails(conn, mek, from, sender, picked) {
+    const botName     = config.BOT_NAME || 'PATHUMTECH MD';
+    const description = config.DESCRIPTION || '> © Powered by PathumTech 🖤';
+
+    try {
+        await conn.sendMessage(from, { react: { text: '⏳', key: mek.key } });
+
+        const site = extractSiteFromItem(picked);
+        const slug = extractSlug(picked);
+        if (!slug) throw new Error('Invalid movie slug');
+
+        const apiData = await getMovieDetails(site, slug, 'all');
+
+        const movie     = apiData.movie || apiData.data || apiData;
+        const downloads = apiData.downloads || movie.downloads || apiData.links || [];
+
+        if (!downloads.length) {
+            throw new Error('No download links available');
+        }
+
+        // ══════════════════════════════════════════════════════════════
+        // 🎨 BUILD CARD
+        // ══════════════════════════════════════════════════════════════
+        const title    = movie.title || picked.title || 'Unknown';
+        const year     = movie.year || picked.year || '';
+        const rating   = movie.imdb || movie.rating || movie.imdb_rating || '';
+        const duration = movie.duration || movie.runtime || '';
+        const genres   = Array.isArray(movie.genres) ? movie.genres.join(' • ') : (movie.genre || '');
+        const lang     = movie.language || movie.lang || '';
+        const country  = movie.country || '';
+        const director = movie.director || '';
+        const cast     = Array.isArray(movie.cast) ? movie.cast.slice(0, 5).join(', ') : (movie.actors || '');
+        const plot     = movie.plot || movie.description || movie.story || '';
+
+        let card = '';
+        card += `╔══════════════════════════════════╗\n`;
+        card += `║   🎬  *MOVIE DETAILS*  🎬\n`;
+        card += `╚══════════════════════════════════╝\n\n`;
+        card += `📽️ *${title}*\n\n`;
+
+        card += `┏━━━━━━━━━━━━━━━━━━━━━━━━━━━┓\n`;
+        card += `┃  📊  *INFORMATION*\n`;
+        card += `┗━━━━━━━━━━━━━━━━━━━━━━━━━━━┛\n`;
+        if (year)     card += `  📅 *Year:* \`${year}\`\n`;
+        if (rating)   card += `  ⭐ *IMDb:* \`${rating}/10\`\n`;
+        if (duration) card += `  ⏱️ *Duration:* \`${duration}\`\n`;
+        if (lang)     card += `  🗣️ *Language:* \`${lang}\`\n`;
+        if (country)  card += `  🌍 *Country:* \`${country}\`\n`;
+        if (genres)   card += `  🎭 *Genres:* \`${genres}\`\n`;
+        card += `\n`;
+
+        if (director) {
+            card += `┏━━━━━━━━━━━━━━━━━━━━━━━━━━━┓\n`;
+            card += `┃  🎥  *DIRECTOR*\n`;
+            card += `┗━━━━━━━━━━━━━━━━━━━━━━━━━━━┛\n`;
+            card += `  👤 ${director}\n\n`;
+        }
+
+        if (cast) {
+            card += `┏━━━━━━━━━━━━━━━━━━━━━━━━━━━┓\n`;
+            card += `┃  ⭐  *MAIN CAST*\n`;
+            card += `┗━━━━━━━━━━━━━━━━━━━━━━━━━━━┛\n`;
+            card += `  🎭 ${cast}\n\n`;
+        }
+
+        if (plot) {
+            card += `┏━━━━━━━━━━━━━━━━━━━━━━━━━━━┓\n`;
+            card += `┃  📖  *STORY*\n`;
+            card += `┗━━━━━━━━━━━━━━━━━━━━━━━━━━━┛\n`;
+            card += `  ${truncate(plot, 500)}\n\n`;
+        }
+
+        // ══════════════════════════════════════════════════════════════
+        // 📥 DOWNLOAD OPTIONS (numbered)
+        // ══════════════════════════════════════════════════════════════
+        card += `┏━━━━━━━━━━━━━━━━━━━━━━━━━━━┓\n`;
+        card += `┃  📥  *DOWNLOAD OPTIONS*\n`;
+        card += `┗━━━━━━━━━━━━━━━━━━━━━━━━━━━┛\n\n`;
+
+        const cleanDownloads = downloads.slice(0, 10);
+        cleanDownloads.forEach((d, i) => {
+            const q = d.quality || d.quality_label || d.label || d.resolution || 'Unknown';
+            const size = fmtSize(d.size || d.file_size || d.filesize || '');
+            const prov = d.provider || d.host || d.server || 'Direct';
+            card += `*${i + 1}.* ${fmtQuality(q)}\n`;
+            card += `     💾 Size: \`${size}\`\n`;
+            card += `     🔗 ${prov}\n\n`;
+        });
+
+        card += `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n`;
+        card += `💬 *Reply with a number (1-${cleanDownloads.length})* to download\n`;
+        card += `⏱️ _Expires in 10 minutes_\n\n`;
+        card += `⚡ *${botName}* ⚡\n${description}`;
+
+        // Send with poster
+        const poster = movie.poster || movie.image || movie.thumbnail || picked.thumbnail || picked.image || '';
+        const contextInfo = {
+            mentionedJid: [sender],
+            forwardingScore: 999,
+            isForwarded: true
+        };
+
+        let sent;
+        if (poster && poster.startsWith('http')) {
+            try {
+                sent = await conn.sendMessage(from, {
+                    image: { url: poster }, caption: card, contextInfo
+                }, { quoted: mek });
+            } catch (e) {
+                console.log('⚠️ Poster failed:', e.message);
+                sent = await conn.sendMessage(from, { text: card, contextInfo }, { quoted: mek });
+            }
+        } else {
+            sent = await conn.sendMessage(from, { text: card, contextInfo }, { quoted: mek });
+        }
+
+        // Save detail state
+        global.MOVIE_DETAIL_STATE.set(from, {
+            msgId: sent.key.id,
+            downloads: cleanDownloads,
+            title: title,
+            timestamp: Date.now()
+        });
+
+        setTimeout(() => {
+            const s = global.MOVIE_DETAIL_STATE.get(from);
+            if (s && s.msgId === sent.key.id && Date.now() - s.timestamp >= TIMEOUT) {
+                global.MOVIE_DETAIL_STATE.delete(from);
+            }
+        }, TIMEOUT);
+
+        await conn.sendMessage(from, { react: { text: '✅', key: mek.key } });
+        console.log(`✅ Details sent: ${title} (${cleanDownloads.length} qualities)`);
+
+    } catch (e) {
+        console.error('❌ Details error:', e.message);
+        await conn.sendMessage(from, { react: { text: '❌', key: mek.key } });
+        try { await reply(`❌ *Failed:* ${e.message}`); } catch (e2) {}
+    }
+}
+
+// ══════════════════════════════════════════════════════════════
+// 📥 HANDLE DOWNLOAD (STEP 3)
+// ══════════════════════════════════════════════════════════════
+async function handleDownload(conn, mek, from, sender, link, movieTitle) {
+    const botName     = config.BOT_NAME || 'PATHUMTECH MD';
+    const description = config.DESCRIPTION || '> © Powered by PathumTech 🖤';
+
+    try {
+        const url = link.url || link.link || link.download_url || link.direct_link;
+        if (!url) throw new Error('No download URL found');
+
+        const quality = link.quality || link.quality_label || link.label || 'Unknown';
+        const size    = fmtSize(link.size || link.file_size || '');
+        const cleanTitle = String(movieTitle).replace(/[^\w\s\-\.]/g, '').replace(/\s+/g, '.').slice(0, 60);
+        const fileName = `${cleanTitle}.${quality}.mp4`;
+
+        await conn.sendMessage(from, { react: { text: '⬇️', key: mek.key } });
+
+        const progressMsg = await conn.sendMessage(from, {
+            text:
+                `╔════════════════════════════╗\n` +
+                `║   📥  *DOWNLOADING...*\n` +
+                `╚════════════════════════════╝\n\n` +
+                `🎬 *${movieTitle}*\n` +
+                `🎞️ Quality: \`${quality}\`\n` +
+                `💾 Size: \`${size}\`\n\n` +
+                `⏳ _Please wait — file upload වෙනවා_\n\n` +
+                `⚡ *${botName}* ⚡`
+        }, { quoted: mek });
+
+        // ══════════════════════════════════════════════════════════════
+        // Send as document
+        // ══════════════════════════════════════════════════════════════
+        await conn.sendMessage(from, {
+            document: { url: url },
+            mimetype: 'video/mp4',
+            fileName: fileName,
+            caption:
+                `╔════════════════════════════════╗\n` +
+                `║   ✅  *MOVIE DOWNLOADED*\n` +
+                `╚════════════════════════════════╝\n\n` +
+                `🎬 *${movieTitle}*\n` +
+                `🎞️ Quality: \`${quality}\`\n` +
+                `💾 Size: \`${size}\`\n\n` +
+                `━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
+                `⚡ *${botName}* ⚡\n${description}`
+        }, { quoted: mek });
+
+        // Delete progress
+        try { await conn.sendMessage(from, { delete: progressMsg.key }); } catch (e) {}
+
+        await conn.sendMessage(from, { react: { text: '✅', key: mek.key } });
+        console.log(`✅ Movie sent: ${movieTitle} — ${quality}`);
+
+    } catch (e) {
+        console.error('❌ Download error:', e.message);
+        await conn.sendMessage(from, { react: { text: '❌', key: mek.key } });
+        try {
+            await reply(
+                `❌ *Download failed!*\n\n` +
+                `📛 Error: \`${e.message.slice(0, 200)}\`\n\n` +
+                `💡 Tips:\n` +
+                `• Link එක expire වෙලා වෙන්න පුළුවන්\n` +
+                `• ආයෙ try කරන්න\n` +
+                `• වෙන quality එකක් try කරන්න`
+            );
+        } catch (e2) {}
+    }
+}
