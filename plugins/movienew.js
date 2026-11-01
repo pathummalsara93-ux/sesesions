@@ -6,13 +6,13 @@ const sharp = require('sharp');
 // ⚙️ CONFIGURATION
 // ═══════════════════════════════════════════════════════════
 const API_BASE = "https://sinhalasub-api-nine.vercel.app";
-const API_KEY  = "sk_ssub_unlimited_eny64b2kgt03r6y4"; // <--- ඔයාගේ API Key එක මෙතන දාන්න (sk_ssub_unlimited_...)
+const API_KEY  = "sk_ssub_unlimited_eny64b2kgt03r6y4"; // <--- මෙතනට ඔයාගේ API Key එක දාන්න (sk_ssub_unlimited_...)
 
 const FOOTER = "\n\n🅻.🆃 𝐅𝐈𝐋𝐌 𝐇𝐔𝐁 ᵀⱽ ˢᵉʳⁱᵉˢ🎞️";
 const userDownloads = new Map();
 
 // ─────────────────────────────────────────────
-// Helper 1: 502 Error Fix (Retry Logic)
+// Helper 1: 502 Error / Timeout Fix (Retry Logic)
 // ─────────────────────────────────────────────
 async function fetchWithRetry(url, retries = 3) {
     for (let i = 0; i < retries; i++) {
@@ -38,7 +38,7 @@ async function fetchWithRetry(url, retries = 3) {
 }
 
 // ─────────────────────────────────────────────
-// Helper 2: Thumbnail Buffer
+// Helper 2: Thumbnail Buffer Generator
 // ─────────────────────────────────────────────
 async function getThumbnailBuffer(url) {
     if (!url) return null;
@@ -46,7 +46,7 @@ async function getThumbnailBuffer(url) {
         const cleanUrl = url.trim();
         const { data } = await axios.get(cleanUrl, {
             responseType: "arraybuffer",
-            timeout: 5000, // ප්‍රමාද නොවෙන්න ටයිම් එක අඩු කළා
+            timeout: 5000,
             headers: { 'User-Agent': 'Mozilla/5.0' }
         });
         return await sharp(data).resize(300, 300).jpeg({ quality: 80 }).toBuffer();
@@ -56,7 +56,7 @@ async function getThumbnailBuffer(url) {
 }
 
 // ─────────────────────────────────────────────
-// Helper 3: Ask user for selection (Reply)
+// Helper 3: Ask User for Selection (Number Reply)
 // ─────────────────────────────────────────────
 async function askSelection(conn, from, mek, headerText, items, footer) {
     let list = `${headerText}\n\n`;
@@ -97,17 +97,22 @@ async function askSelection(conn, from, mek, headerText, items, footer) {
 }
 
 // ─────────────────────────────────────────────
-// Helper 4: Send Document (Stream Method - FIXED)
+// Helper 4: Send Document using Stream Method
 // ─────────────────────────────────────────────
 async function sendDocument(conn, from, mek, url, title, quality, thumbUrl, footer) {
+    // 🚨 Telegram Bot ලින්ක් නම් ඒවා යවන්නේ නෑ (ඒවා වීඩියෝ නෙවෙයි)
+    if (url.includes('telegram.me') || url.includes('t.me')) {
+        return conn.sendMessage(from, { text: `⚠️ මේක Telegram ලින්ක් එකක්. කෙලින්ම වීඩියෝ එක එන්නේ නෑ.\nකරුණාකර වෙන Quality එකක් තෝරන්න.${footer}` }, { quoted: mek });
+    }
+
     const caption = `*${title}*\n\n*Quality:* [${quality}]\n${footer}`;
     try {
         console.log(`📥 Starting file stream from: ${url}`);
         
-        // Baileys ට වඩා හොඳට download කරන්න axios stream එකක් පාවිච්චි කරනවා
+        // Axios හරහා Stream එකක් විදිහට අරගෙන Baileys ට දෙනවා
         const response = await axios.get(url, {
             responseType: 'stream',
-            timeout: 120000, // විනාඩි 2ක් වෙලාව දෙනවා
+            timeout: 120000, // විනාඩි 2ක timeout
             headers: {
                 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
                 'Accept': '*/*',
@@ -116,7 +121,7 @@ async function sendDocument(conn, from, mek, url, title, quality, thumbUrl, foot
         });
 
         await conn.sendMessage(from, {
-            document: { stream: response.data }, // Stream එක Baileys ට දෙනවා
+            document: { stream: response.data }, // Stream Method
             mimetype: "video/mp4",
             fileName: `${title}_${quality}.mp4`.replace(/[^a-zA-Z0-9_.-]/g, '_'),
             jpegThumbnail: await getThumbnailBuffer(thumbUrl),
@@ -126,7 +131,7 @@ async function sendDocument(conn, from, mek, url, title, quality, thumbUrl, foot
         console.log(`✅ Document sent successfully!`);
     } catch (err) {
         console.error("❌ Send document error:", err.message);
-        await conn.sendMessage(from, { text: `❌ File send error: ${err.message}${footer}` }, { quoted: mek });
+        await conn.sendMessage(from, { text: `❌ File send error: ${err.message}\n\n(Vercel Timeout වෙන්න පුළුවන්. පොඩි Quality එකක් ගන්න.)${footer}` }, { quoted: mek });
     }
 }
 
