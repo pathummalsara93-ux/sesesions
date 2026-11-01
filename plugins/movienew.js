@@ -46,7 +46,7 @@ async function getThumbnailBuffer(url) {
         const cleanUrl = url.trim();
         const { data } = await axios.get(cleanUrl, {
             responseType: "arraybuffer",
-            timeout: 15000,
+            timeout: 5000, // ප්‍රමාද නොවෙන්න ටයිම් එක අඩු කළා
             headers: { 'User-Agent': 'Mozilla/5.0' }
         });
         return await sharp(data).resize(300, 300).jpeg({ quality: 80 }).toBuffer();
@@ -97,19 +97,35 @@ async function askSelection(conn, from, mek, headerText, items, footer) {
 }
 
 // ─────────────────────────────────────────────
-// Helper 4: Send Document
+// Helper 4: Send Document (Stream Method - FIXED)
 // ─────────────────────────────────────────────
 async function sendDocument(conn, from, mek, url, title, quality, thumbUrl, footer) {
     const caption = `*${title}*\n\n*Quality:* [${quality}]\n${footer}`;
     try {
+        console.log(`📥 Starting file stream from: ${url}`);
+        
+        // Baileys ට වඩා හොඳට download කරන්න axios stream එකක් පාවිච්චි කරනවා
+        const response = await axios.get(url, {
+            responseType: 'stream',
+            timeout: 120000, // විනාඩි 2ක් වෙලාව දෙනවා
+            headers: {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                'Accept': '*/*',
+                'Referer': 'https://pixeldrain.com/'
+            }
+        });
+
         await conn.sendMessage(from, {
-            document: { url },
+            document: { stream: response.data }, // Stream එක Baileys ට දෙනවා
             mimetype: "video/mp4",
             fileName: `${title}_${quality}.mp4`.replace(/[^a-zA-Z0-9_.-]/g, '_'),
             jpegThumbnail: await getThumbnailBuffer(thumbUrl),
             caption
         }, { quoted: mek });
+        
+        console.log(`✅ Document sent successfully!`);
     } catch (err) {
+        console.error("❌ Send document error:", err.message);
         await conn.sendMessage(from, { text: `❌ File send error: ${err.message}${footer}` }, { quoted: mek });
     }
 }
@@ -237,8 +253,7 @@ cmd({
                         const dlUrl = `${API_BASE}/api/v1/tv/episode-links?slug=${ep.slug}&resolve=true&apikey=${API_KEY}`;
                         const dlRes = await fetchWithRetry(dlUrl);
                         
-                        // API එකෙන් එන ලින්ක් එක ගන්න විදිහ හැඩගැස්සුවා
-                        const finalUrl = dlRes.data?.link || dlRes.data?.directUrl || dlRes.data?.url || dlRes.data?.data?.link;
+                        const finalUrl = dlRes.data?.link || dlRes.data?.directUrl || dlRes.data?.url || dlRes.data?.data?.link || dlRes.data?.mirrors?.[0];
 
                         if (finalUrl) {
                             await sendDocument(conn, from, epMsg, finalUrl, movie.englishTitle, `S${ep.seasonNumber}E${ep.episodeNumber}`, ep.poster || posterUrl, FOOTER);
@@ -259,7 +274,7 @@ cmd({
                 await conn.sendMessage(from, { text: `⏳ *Fetching download link...*${FOOTER}` }, { quoted: epMsg });
                 const dlUrl = `${API_BASE}/api/v1/tv/episode-links?slug=${selectedEp.slug}&resolve=true&apikey=${API_KEY}`;
                 const dlRes = await fetchWithRetry(dlUrl);
-                const finalUrl = dlRes.data?.link || dlRes.data?.directUrl || dlRes.data?.url || dlRes.data?.data?.link;
+                const finalUrl = dlRes.data?.link || dlRes.data?.directUrl || dlRes.data?.url || dlRes.data?.data?.link || dlRes.data?.mirrors?.[0];
 
                 if (!finalUrl) throw new Error("NO_LINK");
                 await sendDocument(conn, from, epMsg, finalUrl, movie.englishTitle, `S${selectedEp.seasonNum}E${selectedEp.epNum}`, selectedEp.poster || posterUrl, FOOTER);
@@ -280,7 +295,6 @@ cmd({
                 return conn.sendMessage(from, { text: `⚠️ API සර්වර් එක රිස්පොන්ස් කරන්නේ නෑ (502).\n\n⏱️ තව විනාඩියකින් නැවත ට්‍රයි කරන්න.${FOOTER}` }, { quoted: searchMsg });
             }
             
-            // 🚨 මෙතන තමයි අලුත් වෙනස්කම. ලොග් එකේ තිබ්බ JSON එකේ හැටියට 'links' array එක ගන්නවා
             const data = linksRes.data;
             let rawLinks = [];
 
@@ -288,24 +302,21 @@ cmd({
                 rawLinks = data.links;
             } else if (Array.isArray(data?.downloadLinks)) {
                 rawLinks = data.downloadLinks;
-            } else if (Array.isArray(data?.results?.data?.links)) { // සමහර වෙලාවට මේ විදිහටත් එන්න පුළුවන්
+            } else if (Array.isArray(data?.results?.data?.links)) {
                 rawLinks = data.results.data.links;
             }
 
-            // ලින්ක් එක තියෙන තැන (portalUrl) හොයාගෙන map කරනවා
             const links = rawLinks.map(l => ({
                 title: l.quality || 'Unknown',
-                link: l.portalUrl || l.directUrl || l.url || l.link, // API එකේ ප්‍රධාන ලින්ක් එක portalUrl
+                link: l.portalUrl || l.directUrl || l.url || l.link,
                 quality: l.quality || 'Unknown',
                 size: l.size || 'N/A'
-            })).filter(l => l.link); // ලින්ක් නැති ඒවා අයින් කරනවා
+            })).filter(l => l.link);
 
             if (!links || links.length === 0) {
-                console.log("❌ No links found in response:", JSON.stringify(data).slice(0, 500));
                 return conn.sendMessage(from, { text: `❌ Download Links හමු නොවීය.${FOOTER}` }, { quoted: searchMsg });
             }
 
-            // Quality තෝරන්න
             const qualityItems = links.map(l => ({
                 title: `${l.quality} (${l.size})`,
                 link: l.link,
@@ -323,22 +334,25 @@ cmd({
             userDownloads.set(from, true);
 
             try {
-                await conn.sendMessage(from, { text: `⏳ *Downloading...*\n\n🎬 ${movie.englishTitle}\n📺 ${selectedQuality.quality}${FOOTER}` }, { quoted: qualityMsg });
+                await conn.sendMessage(from, { text: `⏳ *Resolving link...*` }, { quoted: qualityMsg });
 
                 const resolveUrl = `${API_BASE}/api/v1/movies/resolve-link?url=${encodeURIComponent(selectedQuality.link)}&apikey=${API_KEY}`;
                 let finalUrl;
                 
                 try {
                     const resolveRes = await fetchWithRetry(resolveUrl);
-                    finalUrl = resolveRes.data?.link || resolveRes.data?.directUrl || resolveRes.data?.url || resolveRes.data?.data?.link;
+                    finalUrl = resolveRes.data?.link || resolveRes.data?.directUrl || resolveRes.data?.url || resolveRes.data?.data?.link || resolveRes.data?.mirrors?.[0];
                 } catch (err) {
                     console.log("⚠️ Resolve failed, trying instant download...");
                     const instantUrl = `${API_BASE}/api/v1/movies/download?url=${encodeURIComponent(selectedQuality.link)}&apikey=${API_KEY}`;
                     const instantRes = await fetchWithRetry(instantUrl);
-                    finalUrl = instantRes.data?.link || instantRes.data?.directUrl || instantRes.data?.url || instantRes.data?.data?.link;
+                    finalUrl = instantRes.data?.link || instantRes.data?.directUrl || instantRes.data?.url || instantRes.data?.data?.link || instantRes.data?.mirrors?.[0];
                 }
 
                 if (!finalUrl) throw new Error("NO_LINK");
+
+                await conn.sendMessage(from, { text: `📥 *Downloading to server...*\n\n🎬 ${movie.englishTitle}\n📺 ${selectedQuality.quality}\n\n⏳ File size එක වැඩි නම් ටිකක් වෙලාව ගනී.` }, { quoted: qualityMsg });
+
                 await sendDocument(conn, from, qualityMsg, finalUrl, movie.englishTitle, selectedQuality.quality, posterUrl, FOOTER);
 
             } catch (e) {
