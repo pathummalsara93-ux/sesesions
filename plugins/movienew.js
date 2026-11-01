@@ -88,7 +88,7 @@ async function askSelection(conn, from, mek, headerText, items, footer) {
             const idx = parseInt(body) - 1;
             if (isNaN(idx) || !items[idx]) {
                 await conn.sendMessage(from, { text: `❎ Invalid number. Please reply again.${footer}` }, { quoted: msg });
-                return; // ක්‍රෑෂ් නොකර ආයේ අහනවා
+                return; 
             }
 
             isFinished = true;
@@ -109,7 +109,7 @@ async function askSelection(conn, from, mek, headerText, items, footer) {
 }
 
 // ─────────────────────────────────────────────
-// Helper 4: Send Document (With Size Check)
+// Helper 4: Send Document (Unlimited Size - Stream Method)
 // ─────────────────────────────────────────────
 async function sendDocument(conn, from, mek, url, title, quality, thumbUrl, footer) {
     if (url.includes('telegram.me') || url.includes('t.me')) {
@@ -118,22 +118,17 @@ async function sendDocument(conn, from, mek, url, title, quality, thumbUrl, foot
 
     const caption = `*${title}*\n\n*Quality:* [${quality}]\n${footer}`;
     try {
-        console.log(`📥 Checking size: ${url}`);
-        let fileSize = 0;
-        try {
-            const head = await axios.head(url, { timeout: 10000, headers: { 'User-Agent': 'Mozilla/5.0' } });
-            fileSize = parseInt(head.headers['content-length'] || 0);
-        } catch (e) {}
-
-        // Vercel Kill වෙන්නේ නැතුව ඉන්න 50MB ට වැඩි ඒවා නවත්තනවා
-        if (fileSize > 50 * 1024 * 1024) { 
-            throw new Error(`File too large (${(fileSize / (1024 * 1024)).toFixed(1)}MB). Vercel limit is 50MB.`);
-        }
-
+        console.log(`📥 Starting file stream from: ${url}`);
+        
+        // Stream Method (50MB Limit එක අයින් කළා, ලොකු ෆයිල්ස් වලට RAM පිරෙන්නේ නෑ)
         const response = await axios.get(url, {
             responseType: 'stream',
-            timeout: 60000,
-            headers: { 'User-Agent': 'Mozilla/5.0', 'Accept': '*/*' }
+            timeout: 120000, 
+            headers: {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+                'Accept': '*/*',
+                'Referer': 'https://pixeldrain.com/'
+            }
         });
 
         await conn.sendMessage(from, {
@@ -144,13 +139,10 @@ async function sendDocument(conn, from, mek, url, title, quality, thumbUrl, foot
             caption
         }, { quoted: mek });
         
-        console.log(`✅ Document sent!`);
+        console.log(`✅ Document sent successfully!`);
     } catch (err) {
-        let errorMsg = `❌ File send error: ${err.message}`;
-        if (err.message.includes("File too large") || err.message.includes("maxContentLength")) {
-            errorMsg = `❌ *මේ වීඩියෝ එක ලොකු වැඩියි!*\n\n⚠️ Vercel සර්වර් එකේ ලිමිට් එක නිසා 50MB ට වැඩි ෆයිල්ස් යවන්න බෑ.\n\n✅ පොඩි Quality එකක් (480p) තෝරන්න.`;
-        }
-        await conn.sendMessage(from, { text: `${errorMsg}${footer}` }, { quoted: mek });
+        console.error("❌ Send document error:", err.message);
+        await conn.sendMessage(from, { text: `❌ File send error: ${err.message}\n\n(සමහර විට සර්වර් එකේ Timeout එකක් වෙන්න පුළුවන්. ආයේ ට්‍රයි කරන්න.)${footer}` }, { quoted: mek });
     }
 }
 
@@ -294,7 +286,7 @@ cmd({
 
     } catch (e) {
         if (e.message === "TIMEOUT") return reply(`⏰ ඔයා reply කළේ නෑ. නැවත try කරන්න.${FOOTER}`);
-        if (e.message === "NEW_COMMAND") return; // අලුත් කමාන්ඩ් එකක් ආවම නිකන් ඉන්නවා
+        if (e.message === "NEW_COMMAND") return; 
         await reply(`❌ Error: ${e.message}${FOOTER}`);
     }
 });
