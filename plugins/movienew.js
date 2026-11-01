@@ -6,7 +6,7 @@ const sharp = require('sharp');
 // ⚙️ CONFIGURATION - මේවා ඔයාගේ අවශ්‍යතාවයට වෙනස් කරන්න
 // ═══════════════════════════════════════════════════════════
 const API_BASE = "https://sinhalasub-api-nine.vercel.app";
-const API_KEY  = "YOUR_API_KEY_HERE"; // <--- ඔයාගේ API Key එක මෙතන දාන්න
+const API_KEY  = "sk_ssub_unlimited_eny64b2kgt03r6y4"; // <--- ඔයාගේ API Key එක මෙතන දාන්න
 
 // Default headers (API key එක header එකක් විදිහට යවනවා නම්)
 const HEADERS = {
