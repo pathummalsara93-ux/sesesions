@@ -6,13 +6,15 @@ const sharp = require('sharp');
 // ⚙️ CONFIGURATION
 // ═══════════════════════════════════════════════════════════
 const API_BASE = "https://sinhalasub-api-nine.vercel.app";
-const API_KEY  = "sk_ssub_unlimited_eny64b2kgt03r6y4"; // <--- මෙතනට ඔයාගේ API Key එක දාන්න (sk_ssub_unlimited_...)
+const API_KEY  = "sk_ssub_unlimited_eny64b2kgt03r6y4"; // <--- ඔයාගේ API Key එක
 
 const FOOTER = "\n\n🅻.🆃 𝐅𝐈𝐋𝐌 𝐇𝐔𝐁 ᵀⱽ ˢᵉʳⁱᵉˢ🎞️";
+
+// 🚨 Track ongoing downloads per user (Timestamp එකක් විදිහට)
 const userDownloads = new Map();
 
 // ─────────────────────────────────────────────
-// Helper 1: 502 Error / Timeout Fix (Retry Logic)
+// Helper 1: 502 Error / Timeout Fix
 // ─────────────────────────────────────────────
 async function fetchWithRetry(url, retries = 3) {
     for (let i = 0; i < retries; i++) {
@@ -28,7 +30,7 @@ async function fetchWithRetry(url, retries = 3) {
             const isTimeout = err.code === 'ECONNABORTED' || err.message.includes('timeout');
             
             if ((is502 || isTimeout) && i < retries - 1) {
-                console.log(`⚠️ 502/Timeout Error. Retrying in 3s... (${retries - i - 1} left)`);
+                console.log(`⚠️ 502/Timeout. Retrying...`);
                 await new Promise(r => setTimeout(r, 3000));
             } else {
                 throw err;
@@ -43,20 +45,13 @@ async function fetchWithRetry(url, retries = 3) {
 async function getThumbnailBuffer(url) {
     if (!url) return null;
     try {
-        const cleanUrl = url.trim();
-        const { data } = await axios.get(cleanUrl, {
-            responseType: "arraybuffer",
-            timeout: 5000,
-            headers: { 'User-Agent': 'Mozilla/5.0' }
-        });
+        const { data } = await axios.get(url.trim(), { responseType: "arraybuffer", timeout: 5000, headers: { 'User-Agent': 'Mozilla/5.0' } });
         return await sharp(data).resize(300, 300).jpeg({ quality: 80 }).toBuffer();
-    } catch (e) {
-        return null;
-    }
+    } catch (e) { return null; }
 }
 
 // ─────────────────────────────────────────────
-// Helper 3: Ask User for Selection (Number Reply)
+// Helper 3: Ask User for Selection (FIXED)
 // ─────────────────────────────────────────────
 async function askSelection(conn, from, mek, headerText, items, footer) {
     let list = `${headerText}\n\n`;
@@ -69,69 +64,93 @@ async function askSelection(conn, from, mek, headerText, items, footer) {
     const sent = await conn.sendMessage(from, { text: list }, { quoted: mek });
 
     return new Promise((resolve, reject) => {
+        let isFinished = false;
+
         const handler = async (update) => {
+            if (isFinished) return;
             const msg = update.messages[0];
-            if (!msg.message || msg.key.remoteJid !== from) return;
+            if (!msg.message || msg.key.remoteJid !== from || msg.key.fromMe) return;
 
             const body = msg.message.conversation || msg.message.extendedTextMessage?.text;
             const ctx = msg.message.extendedTextMessage?.contextInfo;
 
-            if (ctx?.stanzaId !== sent.key.id) return;
+            // අලුත් කමාන්ඩ් එකක් ආවොත් කලින් එක Cancel කරනවා
+            if (body.startsWith('.') || body.startsWith('/') || body.startsWith('!')) {
+                isFinished = true;
+                conn.ev.off("messages.upsert", handler);
+                clearTimeout(timeoutId);
+                return reject(new Error("NEW_COMMAND"));
+            }
 
-            conn.ev.off("messages.upsert", handler);
+            // අදාල මැසේජ් එකට reply කරලා නැත්නම් skip කරනවා
+            if (ctx?.stanzaId !== sent.key.id) return;
 
             const idx = parseInt(body) - 1;
             if (isNaN(idx) || !items[idx]) {
-                await conn.sendMessage(from, { text: `❎ Invalid selection.${footer}` }, { quoted: msg });
-                return reject(new Error("INVALID_SELECTION"));
+                await conn.sendMessage(from, { text: `❎ Invalid number. Please reply again.${footer}` }, { quoted: msg });
+                return; // ක්‍රෑෂ් නොකර ආයේ අහනවා
             }
+
+            isFinished = true;
+            conn.ev.off("messages.upsert", handler);
+            clearTimeout(timeoutId);
             resolve({ item: items[idx], msg });
         };
 
         conn.ev.on("messages.upsert", handler);
-        setTimeout(() => {
+        
+        const timeoutId = setTimeout(() => {
+            if (isFinished) return;
+            isFinished = true;
             conn.ev.off("messages.upsert", handler);
             reject(new Error("TIMEOUT"));
-        }, 60000);
+        }, 120000); // විනාඩි 2ක් වෙලාව දෙනවා
     });
 }
 
 // ─────────────────────────────────────────────
-// Helper 4: Send Document using Stream Method
+// Helper 4: Send Document (With Size Check)
 // ─────────────────────────────────────────────
 async function sendDocument(conn, from, mek, url, title, quality, thumbUrl, footer) {
-    // 🚨 Telegram Bot ලින්ක් නම් ඒවා යවන්නේ නෑ (ඒවා වීඩියෝ නෙවෙයි)
     if (url.includes('telegram.me') || url.includes('t.me')) {
-        return conn.sendMessage(from, { text: `⚠️ මේක Telegram ලින්ක් එකක්. කෙලින්ම වීඩියෝ එක එන්නේ නෑ.\nකරුණාකර වෙන Quality එකක් තෝරන්න.${footer}` }, { quoted: mek });
+        return conn.sendMessage(from, { text: `⚠️ මේක Telegram ලින්ක් එකක්. වෙන Quality එකක් තෝරන්න.${footer}` }, { quoted: mek });
     }
 
     const caption = `*${title}*\n\n*Quality:* [${quality}]\n${footer}`;
     try {
-        console.log(`📥 Starting file stream from: ${url}`);
-        
-        // Axios හරහා Stream එකක් විදිහට අරගෙන Baileys ට දෙනවා
+        console.log(`📥 Checking size: ${url}`);
+        let fileSize = 0;
+        try {
+            const head = await axios.head(url, { timeout: 10000, headers: { 'User-Agent': 'Mozilla/5.0' } });
+            fileSize = parseInt(head.headers['content-length'] || 0);
+        } catch (e) {}
+
+        // Vercel Kill වෙන්නේ නැතුව ඉන්න 50MB ට වැඩි ඒවා නවත්තනවා
+        if (fileSize > 50 * 1024 * 1024) { 
+            throw new Error(`File too large (${(fileSize / (1024 * 1024)).toFixed(1)}MB). Vercel limit is 50MB.`);
+        }
+
         const response = await axios.get(url, {
             responseType: 'stream',
-            timeout: 120000, // විනාඩි 2ක timeout
-            headers: {
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-                'Accept': '*/*',
-                'Referer': 'https://pixeldrain.com/'
-            }
+            timeout: 60000,
+            headers: { 'User-Agent': 'Mozilla/5.0', 'Accept': '*/*' }
         });
 
         await conn.sendMessage(from, {
-            document: { stream: response.data }, // Stream Method
+            document: { stream: response.data },
             mimetype: "video/mp4",
             fileName: `${title}_${quality}.mp4`.replace(/[^a-zA-Z0-9_.-]/g, '_'),
             jpegThumbnail: await getThumbnailBuffer(thumbUrl),
             caption
         }, { quoted: mek });
         
-        console.log(`✅ Document sent successfully!`);
+        console.log(`✅ Document sent!`);
     } catch (err) {
-        console.error("❌ Send document error:", err.message);
-        await conn.sendMessage(from, { text: `❌ File send error: ${err.message}\n\n(Vercel Timeout වෙන්න පුළුවන්. පොඩි Quality එකක් ගන්න.)${footer}` }, { quoted: mek });
+        let errorMsg = `❌ File send error: ${err.message}`;
+        if (err.message.includes("File too large") || err.message.includes("maxContentLength")) {
+            errorMsg = `❌ *මේ වීඩියෝ එක ලොකු වැඩියි!*\n\n⚠️ Vercel සර්වර් එකේ ලිමිට් එක නිසා 50MB ට වැඩි ෆයිල්ස් යවන්න බෑ.\n\n✅ පොඩි Quality එකක් (480p) තෝරන්න.`;
+        }
+        await conn.sendMessage(from, { text: `${errorMsg}${footer}` }, { quoted: mek });
     }
 }
 
@@ -155,9 +174,7 @@ cmd({
     try {
         await conn.sendMessage(from, { react: { text: "🎬", key: mek.key } });
 
-        // ═══════════════════════════════════════
-        // STEP 1: SEARCH API
-        // ═══════════════════════════════════════
+        // STEP 1: SEARCH
         const searchUrl = `${API_BASE}/api/v1/movies/search?q=${encodeURIComponent(query)}&apikey=${API_KEY}`;
         const searchRes = await fetchWithRetry(searchUrl);
 
@@ -165,35 +182,24 @@ cmd({
             return reply(`❌ "${query}" සඳහා කිසිවක් හමු නොවීය.${FOOTER}`);
         }
 
-        const results = searchRes.data.results;
-
-        // ═══════════════════════════════════════
-        // STEP 2: SEARCH LIST SELECTION
-        // ═══════════════════════════════════════
+        // STEP 2: SEARCH LIST
         const { item: selected, msg: searchMsg } = await askSelection(
             conn, from, mek,
             `〽️ *SEARCH RESULTS*\n\n🔎 ${query.toUpperCase()}`,
-            results,
+            searchRes.data.results,
             FOOTER
         );
 
         await conn.sendMessage(from, { react: { text: "📑", key: searchMsg.key } });
         const isTV = selected.type === 'tv' || selected.url?.includes('/tvshows/');
 
-        // ═══════════════════════════════════════
-        // STEP 3: DETAILS API
-        // ═══════════════════════════════════════
+        // STEP 3: DETAILS
         const detailEndpoint = isTV ? '/api/v1/tv/details' : '/api/v1/movies/details';
-        const detailUrl = `${API_BASE}${detailEndpoint}?url=${encodeURIComponent(selected.url)}&apikey=${API_KEY}`;
-        
-        const detailRes = await fetchWithRetry(detailUrl);
+        const detailRes = await fetchWithRetry(`${API_BASE}${detailEndpoint}?url=${encodeURIComponent(selected.url)}&apikey=${API_KEY}`);
         const movie = detailRes.data?.movie || detailRes.data?.tvShow;
 
-        if (!movie) {
-            return conn.sendMessage(from, { text: `❌ Details හමු නොවීය.${FOOTER}` }, { quoted: searchMsg });
-        }
+        if (!movie) return conn.sendMessage(from, { text: `❌ Details හමු නොවීය.${FOOTER}` }, { quoted: searchMsg });
 
-        // ── DETAILS CARD ──
         let cap = `*☘️ ${movie.englishTitle || movie.title || 'N/A'}*\n\n`;
         if (movie.imdbRating) cap += `*⭐ IMDb* ➟ *${movie.imdbRating}*\n`;
         if (movie.year)       cap += `*📅 Year* ➟ *${movie.year}*\n`;
@@ -203,84 +209,44 @@ cmd({
         cap += FOOTER;
 
         const posterUrl = movie.poster ? movie.poster.trim() : null;
+        await conn.sendMessage(from, { image: { url: posterUrl }, caption: cap }, { quoted: searchMsg });
 
-        await conn.sendMessage(from, {
-            image: { url: posterUrl },
-            caption: cap
-        }, { quoted: searchMsg });
-
-        // ═══════════════════════════════════════
-        // STEP 4: MOVIE / TV FLOW
-        // ═══════════════════════════════════════
+        // STEP 4: FLOW
         if (isTV) {
-            // ── TV SERIES FLOW ──
+            // ── TV SERIES ──
             const seasons = movie.seasons || [];
-            if (!seasons.length) {
-                return conn.sendMessage(from, { text: `❌ Seasons හමු නොවීය.${FOOTER}` }, { quoted: searchMsg });
-            }
+            if (!seasons.length) return conn.sendMessage(from, { text: `❌ Seasons හමු නොවීය.${FOOTER}` }, { quoted: searchMsg });
 
-            const seasonItems = seasons.map(s => ({ title: s.title || `Season ${s.seasonNumber}`, season: s }));
-            const { item: selectedSeason, msg: seasonMsg } = await askSelection(
-                conn, from, searchMsg,
-                `📺 *SELECT SEASON*`,
-                seasonItems,
-                FOOTER
-            );
-
+            const { item: selectedSeason, msg: seasonMsg } = await askSelection(conn, from, searchMsg, `📺 *SELECT SEASON*`, seasons.map(s => ({ title: s.title || `Season ${s.seasonNumber}`, season: s })), FOOTER);
             const seasonEps = selectedSeason.season.episodes || [];
 
-            const epItems = seasonEps.map(ep => ({
-                title: ep.title || `Episode ${ep.episodeNumber}`,
-                slug: ep.slug,
-                seasonNum: ep.seasonNumber,
-                epNum: ep.episodeNumber,
-                poster: ep.poster
-            }));
-
+            const epItems = seasonEps.map(ep => ({ title: ep.title || `Episode ${ep.episodeNumber}`, slug: ep.slug, seasonNum: ep.seasonNumber, epNum: ep.episodeNumber, poster: ep.poster }));
             epItems.push({ title: `📦 Download ALL ${seasonEps.length} episodes`, bulk: true });
 
-            const { item: selectedEp, msg: epMsg } = await askSelection(
-                conn, from, seasonMsg,
-                `📥 *SELECT EPISODE* (${selectedSeason.season.title})`,
-                epItems,
-                FOOTER
-            );
+            const { item: selectedEp, msg: epMsg } = await askSelection(conn, from, seasonMsg, `📥 *SELECT EPISODE* (${selectedSeason.season.title})`, epItems, FOOTER);
 
-            // ── BULK DOWNLOAD ──
             if (selectedEp.bulk) {
                 await conn.sendMessage(from, { text: `📦 *Bulk download started!*\nEpisodes ${seasonEps.length}ක් එකින් එක යවනවා...${FOOTER}` }, { quoted: epMsg });
-
                 for (let i = 0; i < seasonEps.length; i++) {
                     const ep = seasonEps[i];
                     try {
-                        await conn.sendMessage(from, { text: `⏳ Fetching: ${ep.title}${FOOTER}` }, { quoted: epMsg });
-                        
-                        const dlUrl = `${API_BASE}/api/v1/tv/episode-links?slug=${ep.slug}&resolve=true&apikey=${API_KEY}`;
-                        const dlRes = await fetchWithRetry(dlUrl);
-                        
-                        const finalUrl = dlRes.data?.link || dlRes.data?.directUrl || dlRes.data?.url || dlRes.data?.data?.link || dlRes.data?.mirrors?.[0];
-
-                        if (finalUrl) {
-                            await sendDocument(conn, from, epMsg, finalUrl, movie.englishTitle, `S${ep.seasonNumber}E${ep.episodeNumber}`, ep.poster || posterUrl, FOOTER);
-                        }
-                    } catch (e) {
-                        console.error(`Ep ${i+1} failed:`, e.message);
-                    }
+                        const dlRes = await fetchWithRetry(`${API_BASE}/api/v1/tv/episode-links?slug=${ep.slug}&resolve=true&apikey=${API_KEY}`);
+                        const finalUrl = dlRes.data?.link || dlRes.data?.directUrl || dlRes.data?.url || dlRes.data?.mirrors?.[0];
+                        if (finalUrl) await sendDocument(conn, from, epMsg, finalUrl, movie.englishTitle, `S${ep.seasonNumber}E${ep.episodeNumber}`, ep.poster || posterUrl, FOOTER);
+                    } catch (e) {}
                     await new Promise(r => setTimeout(r, 3000));
                 }
                 return;
             }
 
-            // ── SINGLE EPISODE DOWNLOAD ──
-            if (userDownloads.get(from)) return conn.sendMessage(from, { text: `⏳ කලින් download එකක් යනවා...${FOOTER}` }, { quoted: epMsg });
-            userDownloads.set(from, true);
+            // Single Episode
+            const lockTime = userDownloads.get(from);
+            if (lockTime && Date.now() - lockTime < 5 * 60 * 1000) return conn.sendMessage(from, { text: `⏳ කලින් download එකක් යනවා...${FOOTER}` }, { quoted: epMsg });
+            userDownloads.set(from, Date.now());
 
             try {
-                await conn.sendMessage(from, { text: `⏳ *Fetching download link...*${FOOTER}` }, { quoted: epMsg });
-                const dlUrl = `${API_BASE}/api/v1/tv/episode-links?slug=${selectedEp.slug}&resolve=true&apikey=${API_KEY}`;
-                const dlRes = await fetchWithRetry(dlUrl);
-                const finalUrl = dlRes.data?.link || dlRes.data?.directUrl || dlRes.data?.url || dlRes.data?.data?.link || dlRes.data?.mirrors?.[0];
-
+                const dlRes = await fetchWithRetry(`${API_BASE}/api/v1/tv/episode-links?slug=${selectedEp.slug}&resolve=true&apikey=${API_KEY}`);
+                const finalUrl = dlRes.data?.link || dlRes.data?.directUrl || dlRes.data?.url || dlRes.data?.mirrors?.[0];
                 if (!finalUrl) throw new Error("NO_LINK");
                 await sendDocument(conn, from, epMsg, finalUrl, movie.englishTitle, `S${selectedEp.seasonNum}E${selectedEp.epNum}`, selectedEp.poster || posterUrl, FOOTER);
             } catch (e) {
@@ -290,80 +256,36 @@ cmd({
             }
 
         } else {
-            // ── MOVIE FLOW ──
-            const linksUrl = `${API_BASE}/api/v1/movies/download-links?url=${encodeURIComponent(selected.url)}&apikey=${API_KEY}`;
-            
-            let linksRes;
-            try {
-                linksRes = await fetchWithRetry(linksUrl);
-            } catch (err) {
-                return conn.sendMessage(from, { text: `⚠️ API සර්වර් එක රිස්පොන්ස් කරන්නේ නෑ (502).\n\n⏱️ තව විනාඩියකින් නැවත ට්‍රයි කරන්න.${FOOTER}` }, { quoted: searchMsg });
-            }
-            
-            const data = linksRes.data;
-            let rawLinks = [];
+            // ── MOVIE ──
+            const linksRes = await fetchWithRetry(`${API_BASE}/api/v1/movies/download-links?url=${encodeURIComponent(selected.url)}&apikey=${API_KEY}`);
+            let rawLinks = linksRes.data?.links || linksRes.data?.downloadLinks || linksRes.data?.results?.data?.links || [];
 
-            if (Array.isArray(data?.links)) {
-                rawLinks = data.links;
-            } else if (Array.isArray(data?.downloadLinks)) {
-                rawLinks = data.downloadLinks;
-            } else if (Array.isArray(data?.results?.data?.links)) {
-                rawLinks = data.results.data.links;
-            }
+            const links = rawLinks.map(l => ({ title: l.quality || 'Unknown', link: l.portalUrl || l.directUrl || l.url || l.link, quality: l.quality || 'Unknown', size: l.size || 'N/A' })).filter(l => l.link);
+            if (!links.length) return conn.sendMessage(from, { text: `❌ Download Links හමු නොවීය.${FOOTER}` }, { quoted: searchMsg });
 
-            const links = rawLinks.map(l => ({
-                title: l.quality || 'Unknown',
-                link: l.portalUrl || l.directUrl || l.url || l.link,
-                quality: l.quality || 'Unknown',
-                size: l.size || 'N/A'
-            })).filter(l => l.link);
+            const { item: selectedQuality, msg: qualityMsg } = await askSelection(conn, from, searchMsg, `📥 *SELECT QUALITY*`, links.map(l => ({ title: `${l.quality} (${l.size})`, link: l.link, quality: l.quality })), FOOTER);
 
-            if (!links || links.length === 0) {
-                return conn.sendMessage(from, { text: `❌ Download Links හමු නොවීය.${FOOTER}` }, { quoted: searchMsg });
-            }
-
-            const qualityItems = links.map(l => ({
-                title: `${l.quality} (${l.size})`,
-                link: l.link,
-                quality: l.quality
-            }));
-
-            const { item: selectedQuality, msg: qualityMsg } = await askSelection(
-                conn, from, searchMsg,
-                `📥 *SELECT QUALITY*`,
-                qualityItems,
-                FOOTER
-            );
-
-            if (userDownloads.get(from)) return conn.sendMessage(from, { text: `⏳ කලින් download එකක් යනවා...${FOOTER}` }, { quoted: qualityMsg });
-            userDownloads.set(from, true);
+            // Lock check
+            const lockTime = userDownloads.get(from);
+            if (lockTime && Date.now() - lockTime < 5 * 60 * 1000) return conn.sendMessage(from, { text: `⏳ කලින් download එකක් යනවා...${FOOTER}` }, { quoted: qualityMsg });
+            userDownloads.set(from, Date.now());
 
             try {
-                await conn.sendMessage(from, { text: `⏳ *Resolving link...*` }, { quoted: qualityMsg });
-
-                const resolveUrl = `${API_BASE}/api/v1/movies/resolve-link?url=${encodeURIComponent(selectedQuality.link)}&apikey=${API_KEY}`;
                 let finalUrl;
-                
                 try {
-                    const resolveRes = await fetchWithRetry(resolveUrl);
-                    finalUrl = resolveRes.data?.link || resolveRes.data?.directUrl || resolveRes.data?.url || resolveRes.data?.data?.link || resolveRes.data?.mirrors?.[0];
+                    const resolveRes = await fetchWithRetry(`${API_BASE}/api/v1/movies/resolve-link?url=${encodeURIComponent(selectedQuality.link)}&apikey=${API_KEY}`);
+                    finalUrl = resolveRes.data?.link || resolveRes.data?.directUrl || resolveRes.data?.url || resolveRes.data?.mirrors?.[0];
                 } catch (err) {
-                    console.log("⚠️ Resolve failed, trying instant download...");
-                    const instantUrl = `${API_BASE}/api/v1/movies/download?url=${encodeURIComponent(selectedQuality.link)}&apikey=${API_KEY}`;
-                    const instantRes = await fetchWithRetry(instantUrl);
-                    finalUrl = instantRes.data?.link || instantRes.data?.directUrl || instantRes.data?.url || instantRes.data?.data?.link || instantRes.data?.mirrors?.[0];
+                    const instantRes = await fetchWithRetry(`${API_BASE}/api/v1/movies/download?url=${encodeURIComponent(selectedQuality.link)}&apikey=${API_KEY}`);
+                    finalUrl = instantRes.data?.link || instantRes.data?.directUrl || instantRes.data?.url || instantRes.data?.mirrors?.[0];
                 }
 
                 if (!finalUrl) throw new Error("NO_LINK");
-
-                await conn.sendMessage(from, { text: `📥 *Downloading to server...*\n\n🎬 ${movie.englishTitle}\n📺 ${selectedQuality.quality}\n\n⏳ File size එක වැඩි නම් ටිකක් වෙලාව ගනී.` }, { quoted: qualityMsg });
-
                 await sendDocument(conn, from, qualityMsg, finalUrl, movie.englishTitle, selectedQuality.quality, posterUrl, FOOTER);
 
             } catch (e) {
                 let errMsg = `❌ Download failed: ${e.message}`;
                 if (e.message === "NO_LINK") errMsg = "❌ API එකෙන් link එකක් ලැබුනේ නෑ. වෙන quality එකක් try කරන්න.";
-                if (e.message.includes("timeout") || e.response?.status === 502) errMsg = "⚠️ API සර්වර් එක රිස්පොන්ස් කරන්නේ නෑ (502).\n\n⏱️ තව විනාඩියකින් නැවත ට්‍රයි කරන්න.";
                 await conn.sendMessage(from, { text: `${errMsg}${FOOTER}` }, { quoted: qualityMsg });
             } finally {
                 userDownloads.delete(from);
@@ -371,8 +293,8 @@ cmd({
         }
 
     } catch (e) {
-        console.error("❌ MAIN ERROR:", e.message);
         if (e.message === "TIMEOUT") return reply(`⏰ ඔයා reply කළේ නෑ. නැවත try කරන්න.${FOOTER}`);
+        if (e.message === "NEW_COMMAND") return; // අලුත් කමාන්ඩ් එකක් ආවම නිකන් ඉන්නවා
         await reply(`❌ Error: ${e.message}${FOOTER}`);
     }
 });
