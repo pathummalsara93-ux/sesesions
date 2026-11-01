@@ -236,7 +236,9 @@ cmd({
                         
                         const dlUrl = `${API_BASE}/api/v1/tv/episode-links?slug=${ep.slug}&resolve=true&apikey=${API_KEY}`;
                         const dlRes = await fetchWithRetry(dlUrl);
-                        const finalUrl = dlRes.data?.link || dlRes.data?.url || dlRes.data?.data?.link;
+                        
+                        // API එකෙන් එන ලින්ක් එක ගන්න විදිහ හැඩගැස්සුවා
+                        const finalUrl = dlRes.data?.link || dlRes.data?.directUrl || dlRes.data?.url || dlRes.data?.data?.link;
 
                         if (finalUrl) {
                             await sendDocument(conn, from, epMsg, finalUrl, movie.englishTitle, `S${ep.seasonNumber}E${ep.episodeNumber}`, ep.poster || posterUrl, FOOTER);
@@ -257,7 +259,7 @@ cmd({
                 await conn.sendMessage(from, { text: `⏳ *Fetching download link...*${FOOTER}` }, { quoted: epMsg });
                 const dlUrl = `${API_BASE}/api/v1/tv/episode-links?slug=${selectedEp.slug}&resolve=true&apikey=${API_KEY}`;
                 const dlRes = await fetchWithRetry(dlUrl);
-                const finalUrl = dlRes.data?.link || dlRes.data?.url || dlRes.data?.data?.link;
+                const finalUrl = dlRes.data?.link || dlRes.data?.directUrl || dlRes.data?.url || dlRes.data?.data?.link;
 
                 if (!finalUrl) throw new Error("NO_LINK");
                 await sendDocument(conn, from, epMsg, finalUrl, movie.englishTitle, `S${selectedEp.seasonNum}E${selectedEp.epNum}`, selectedEp.poster || posterUrl, FOOTER);
@@ -278,31 +280,25 @@ cmd({
                 return conn.sendMessage(from, { text: `⚠️ API සර්වර් එක රිස්පොන්ස් කරන්නේ නෑ (502).\n\n⏱️ තව විනාඩියකින් නැවත ට්‍රයි කරන්න.${FOOTER}` }, { quoted: searchMsg });
             }
             
-            // 🚨 FIXED LOGIC: API එකේ dl_links ස්ට්‍රක්චර් එක හරියටම කියවීම
-            let rawLinks = [];
+            // 🚨 මෙතන තමයි අලුත් වෙනස්කම. ලොග් එකේ තිබ්බ JSON එකේ හැටියට 'links' array එක ගන්නවා
             const data = linksRes.data;
+            let rawLinks = [];
 
-            if (data?.results?.data?.dl_links) {
-                for (const server in data.results.data.dl_links) {
-                    if (Array.isArray(data.results.data.dl_links[server])) {
-                        rawLinks.push(...data.results.data.dl_links[server]);
-                    }
-                }
-            } else if (data?.dl_links) {
-                for (const server in data.dl_links) {
-                    if (Array.isArray(data.dl_links[server])) {
-                        rawLinks.push(...data.dl_links[server]);
-                    }
-                }
+            if (Array.isArray(data?.links)) {
+                rawLinks = data.links;
             } else if (Array.isArray(data?.downloadLinks)) {
                 rawLinks = data.downloadLinks;
-            } else if (Array.isArray(data?.links)) {
-                rawLinks = data.links;
-            } else if (Array.isArray(data)) {
-                rawLinks = data;
+            } else if (Array.isArray(data?.results?.data?.links)) { // සමහර වෙලාවට මේ විදිහටත් එන්න පුළුවන්
+                rawLinks = data.results.data.links;
             }
 
-            const links = rawLinks.filter(l => l && l.link);
+            // ලින්ක් එක තියෙන තැන (portalUrl) හොයාගෙන map කරනවා
+            const links = rawLinks.map(l => ({
+                title: l.quality || 'Unknown',
+                link: l.portalUrl || l.directUrl || l.url || l.link, // API එකේ ප්‍රධාන ලින්ක් එක portalUrl
+                quality: l.quality || 'Unknown',
+                size: l.size || 'N/A'
+            })).filter(l => l.link); // ලින්ක් නැති ඒවා අයින් කරනවා
 
             if (!links || links.length === 0) {
                 console.log("❌ No links found in response:", JSON.stringify(data).slice(0, 500));
@@ -311,10 +307,9 @@ cmd({
 
             // Quality තෝරන්න
             const qualityItems = links.map(l => ({
-                title: l.quality || l.name || 'Unknown',
+                title: `${l.quality} (${l.size})`,
                 link: l.link,
-                quality: l.quality || l.name || 'Unknown',
-                size: l.size
+                quality: l.quality
             }));
 
             const { item: selectedQuality, msg: qualityMsg } = await askSelection(
@@ -335,11 +330,12 @@ cmd({
                 
                 try {
                     const resolveRes = await fetchWithRetry(resolveUrl);
-                    finalUrl = resolveRes.data?.link || resolveRes.data?.url || resolveRes.data?.data?.link;
+                    finalUrl = resolveRes.data?.link || resolveRes.data?.directUrl || resolveRes.data?.url || resolveRes.data?.data?.link;
                 } catch (err) {
+                    console.log("⚠️ Resolve failed, trying instant download...");
                     const instantUrl = `${API_BASE}/api/v1/movies/download?url=${encodeURIComponent(selectedQuality.link)}&apikey=${API_KEY}`;
                     const instantRes = await fetchWithRetry(instantUrl);
-                    finalUrl = instantRes.data?.link || instantRes.data?.url || instantRes.data?.data?.link;
+                    finalUrl = instantRes.data?.link || instantRes.data?.directUrl || instantRes.data?.url || instantRes.data?.data?.link;
                 }
 
                 if (!finalUrl) throw new Error("NO_LINK");
