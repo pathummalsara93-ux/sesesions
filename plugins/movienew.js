@@ -6,7 +6,7 @@ const sharp = require('sharp');
 // ⚙️ CONFIGURATION
 // ═══════════════════════════════════════════════════════════
 const API_BASE = "https://sinhalasub-api-nine.vercel.app";
-const API_KEY  = "sk_ssub_unlimited_eny64b2kgt03r6y4"; // <--- මෙතනට ඔයාගේ API Key එක දාන්න (sk_ssub_unlimited_...)
+const API_KEY  = "sk_ssub_unlimited_eny64b2kgt03r6y4"; // <--- ඔයාගේ API Key එක මෙතන දාන්න (sk_ssub_unlimited_...)
 
 const FOOTER = "\n\n🅻.🆃 𝐅𝐈𝐋𝐌 𝐇𝐔𝐁 ᵀⱽ ˢᵉʳⁱᵉˢ🎞️";
 const userDownloads = new Map();
@@ -18,7 +18,6 @@ async function fetchWithRetry(url, retries = 3) {
     for (let i = 0; i < retries; i++) {
         try {
             console.log(`📡 API Call (Attempt ${i + 1}/${retries}):`, url);
-            // timeout 45s දාලා තියෙනවා Vercel එකට වෙලාව දෙන්න
             const res = await axios.get(url, { 
                 timeout: 45000,
                 headers: { 'X-API-Key': API_KEY, 'Accept': 'application/json' }
@@ -30,9 +29,9 @@ async function fetchWithRetry(url, retries = 3) {
             
             if ((is502 || isTimeout) && i < retries - 1) {
                 console.log(`⚠️ 502/Timeout Error. Retrying in 3s... (${retries - i - 1} left)`);
-                await new Promise(r => setTimeout(r, 3000)); // තත්පර 3ක් ඉඳලා ආයේ ට්‍රයි කරනවා
+                await new Promise(r => setTimeout(r, 3000));
             } else {
-                throw err; // ට්‍රයි කරලා බැරි උනොත් එරර් එක එලියට දානවා
+                throw err;
             }
         }
     }
@@ -77,7 +76,6 @@ async function askSelection(conn, from, mek, headerText, items, footer) {
             const body = msg.message.conversation || msg.message.extendedTextMessage?.text;
             const ctx = msg.message.extendedTextMessage?.contextInfo;
 
-            // අදාල message එකට reply කරලද බලනවා
             if (ctx?.stanzaId !== sent.key.id) return;
 
             conn.ev.off("messages.upsert", handler);
@@ -94,7 +92,7 @@ async function askSelection(conn, from, mek, headerText, items, footer) {
         setTimeout(() => {
             conn.ev.off("messages.upsert", handler);
             reject(new Error("TIMEOUT"));
-        }, 60000); // තත්පර 60 ක් ඇතුලත reply නොකළොත් cancel වෙනවා
+        }, 60000);
     });
 }
 
@@ -122,7 +120,7 @@ async function sendDocument(conn, from, mek, url, title, quality, thumbUrl, foot
 cmd({
     pattern: "movie",
     alias: ["film", "mv", "tv"],
-    desc: "Search & Download Movies / TV Series (Sinhala Subtitles)",
+    desc: "Search & Download Movies / TV Series",
     category: "download",
     react: "🎬",
     filename: __filename
@@ -200,7 +198,6 @@ cmd({
                 return conn.sendMessage(from, { text: `❌ Seasons හමු නොවීය.${FOOTER}` }, { quoted: searchMsg });
             }
 
-            // Season තෝරන්න
             const seasonItems = seasons.map(s => ({ title: s.title || `Season ${s.seasonNumber}`, season: s }));
             const { item: selectedSeason, msg: seasonMsg } = await askSelection(
                 conn, from, searchMsg,
@@ -211,7 +208,6 @@ cmd({
 
             const seasonEps = selectedSeason.season.episodes || [];
 
-            // Episode තෝරන්න හෝ Bulk Download
             const epItems = seasonEps.map(ep => ({
                 title: ep.title || `Episode ${ep.episodeNumber}`,
                 slug: ep.slug,
@@ -220,7 +216,6 @@ cmd({
                 poster: ep.poster
             }));
 
-            // Bulk Download Option එක
             epItems.push({ title: `📦 Download ALL ${seasonEps.length} episodes`, bulk: true });
 
             const { item: selectedEp, msg: epMsg } = await askSelection(
@@ -248,9 +243,7 @@ cmd({
                         }
                     } catch (e) {
                         console.error(`Ep ${i+1} failed:`, e.message);
-                        await conn.sendMessage(from, { text: `❌ Ep ${i+1} failed: ${e.message}${FOOTER}` }, { quoted: epMsg });
                     }
-                    // WhatsApp block නොවෙන්න තත්පර 3ක delay එකක්
                     await new Promise(r => setTimeout(r, 3000));
                 }
                 return;
@@ -282,19 +275,44 @@ cmd({
             try {
                 linksRes = await fetchWithRetry(linksUrl);
             } catch (err) {
-                return conn.sendMessage(from, { text: `⚠️ API සර්වර් එක රිස්පොන්ස් කරන්නේ නෑ (502).\n\n⏱️ තව විනාඩියකින් නැවත ට්‍රයි කරන්න, නැත්නම් පොඩි file එකක් (480p) තෝරන්න.${FOOTER}` }, { quoted: searchMsg });
+                return conn.sendMessage(from, { text: `⚠️ API සර්වර් එක රිස්පොන්ස් කරන්නේ නෑ (502).\n\n⏱️ තව විනාඩියකින් නැවත ට්‍රයි කරන්න.${FOOTER}` }, { quoted: searchMsg });
             }
             
-            const links = linksRes?.data?.downloadLinks || linksRes?.data?.links || linksRes?.data?.results || (Array.isArray(linksRes?.data) ? linksRes.data : []);
+            // 🚨 FIXED LOGIC: API එකේ dl_links ස්ට්‍රක්චර් එක හරියටම කියවීම
+            let rawLinks = [];
+            const data = linksRes.data;
+
+            if (data?.results?.data?.dl_links) {
+                for (const server in data.results.data.dl_links) {
+                    if (Array.isArray(data.results.data.dl_links[server])) {
+                        rawLinks.push(...data.results.data.dl_links[server]);
+                    }
+                }
+            } else if (data?.dl_links) {
+                for (const server in data.dl_links) {
+                    if (Array.isArray(data.dl_links[server])) {
+                        rawLinks.push(...data.dl_links[server]);
+                    }
+                }
+            } else if (Array.isArray(data?.downloadLinks)) {
+                rawLinks = data.downloadLinks;
+            } else if (Array.isArray(data?.links)) {
+                rawLinks = data.links;
+            } else if (Array.isArray(data)) {
+                rawLinks = data;
+            }
+
+            const links = rawLinks.filter(l => l && l.link);
 
             if (!links || links.length === 0) {
+                console.log("❌ No links found in response:", JSON.stringify(data).slice(0, 500));
                 return conn.sendMessage(from, { text: `❌ Download Links හමු නොවීය.${FOOTER}` }, { quoted: searchMsg });
             }
 
             // Quality තෝරන්න
             const qualityItems = links.map(l => ({
                 title: l.quality || l.name || 'Unknown',
-                link: l.link || l.url,
+                link: l.link,
                 quality: l.quality || l.name || 'Unknown',
                 size: l.size
             }));
@@ -306,14 +324,12 @@ cmd({
                 FOOTER
             );
 
-            // Download කිරීම
             if (userDownloads.get(from)) return conn.sendMessage(from, { text: `⏳ කලින් download එකක් යනවා...${FOOTER}` }, { quoted: qualityMsg });
             userDownloads.set(from, true);
 
             try {
                 await conn.sendMessage(from, { text: `⏳ *Downloading...*\n\n🎬 ${movie.englishTitle}\n📺 ${selectedQuality.quality}${FOOTER}` }, { quoted: qualityMsg });
 
-                // Resolve Direct Link
                 const resolveUrl = `${API_BASE}/api/v1/movies/resolve-link?url=${encodeURIComponent(selectedQuality.link)}&apikey=${API_KEY}`;
                 let finalUrl;
                 
@@ -321,7 +337,6 @@ cmd({
                     const resolveRes = await fetchWithRetry(resolveUrl);
                     finalUrl = resolveRes.data?.link || resolveRes.data?.url || resolveRes.data?.data?.link;
                 } catch (err) {
-                    // Resolve fail වුනොත් Instant download try කරනවා
                     const instantUrl = `${API_BASE}/api/v1/movies/download?url=${encodeURIComponent(selectedQuality.link)}&apikey=${API_KEY}`;
                     const instantRes = await fetchWithRetry(instantUrl);
                     finalUrl = instantRes.data?.link || instantRes.data?.url || instantRes.data?.data?.link;
@@ -333,7 +348,7 @@ cmd({
             } catch (e) {
                 let errMsg = `❌ Download failed: ${e.message}`;
                 if (e.message === "NO_LINK") errMsg = "❌ API එකෙන් link එකක් ලැබුනේ නෑ. වෙන quality එකක් try කරන්න.";
-                if (e.message.includes("timeout") || e.response?.status === 502) errMsg = "⚠️ API සර්වර් එක රිස්පොන්ස් කරන්නේ නෑ (502).\n\n⏱️ තව විනාඩියකින් නැවත ට්‍රයි කරන්න, නැත්නම් පොඩි file එකක් (480p) තෝරන්න.";
+                if (e.message.includes("timeout") || e.response?.status === 502) errMsg = "⚠️ API සර්වර් එක රිස්පොන්ස් කරන්නේ නෑ (502).\n\n⏱️ තව විනාඩියකින් නැවත ට්‍රයි කරන්න.";
                 await conn.sendMessage(from, { text: `${errMsg}${FOOTER}` }, { quoted: qualityMsg });
             } finally {
                 userDownloads.delete(from);
