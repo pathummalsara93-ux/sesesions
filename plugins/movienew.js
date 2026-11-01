@@ -6,16 +6,44 @@ const sharp = require('sharp');
 // ⚙️ CONFIGURATION
 // ═══════════════════════════════════════════════════════════
 const API_BASE = "https://sinhalasub-api-nine.vercel.app";
-const API_KEY  = "sk_ssub_unlimited_eny64b2kgt03r6y4"; // <--- ඔයාගේ API Key එක මෙතන දාන්න (උදා: sk_ssub_unlimited_...)
+const API_KEY  = "sk_ssub_unlimited_eny64b2kgt03r6y4"; // <--- මෙතනට ඔයාගේ API Key එක දාන්න (sk_ssub_unlimited_...)
 
 const FOOTER = "\n\n🅻.🆃 𝐅𝐈𝐋𝐌 𝐇𝐔𝐁 ᵀⱽ ˢᵉʳⁱᵉˢ🎞️";
 const userDownloads = new Map();
 
-// Helper: Thumbnail Buffer
+// ─────────────────────────────────────────────
+// Helper 1: 502 Error Fix (Retry Logic)
+// ─────────────────────────────────────────────
+async function fetchWithRetry(url, retries = 3) {
+    for (let i = 0; i < retries; i++) {
+        try {
+            console.log(`📡 API Call (Attempt ${i + 1}/${retries}):`, url);
+            // timeout 45s දාලා තියෙනවා Vercel එකට වෙලාව දෙන්න
+            const res = await axios.get(url, { 
+                timeout: 45000,
+                headers: { 'X-API-Key': API_KEY, 'Accept': 'application/json' }
+            });
+            return res;
+        } catch (err) {
+            const is502 = err.response?.status === 502;
+            const isTimeout = err.code === 'ECONNABORTED' || err.message.includes('timeout');
+            
+            if ((is502 || isTimeout) && i < retries - 1) {
+                console.log(`⚠️ 502/Timeout Error. Retrying in 3s... (${retries - i - 1} left)`);
+                await new Promise(r => setTimeout(r, 3000)); // තත්පර 3ක් ඉඳලා ආයේ ට්‍රයි කරනවා
+            } else {
+                throw err; // ට්‍රයි කරලා බැරි උනොත් එරර් එක එලියට දානවා
+            }
+        }
+    }
+}
+
+// ─────────────────────────────────────────────
+// Helper 2: Thumbnail Buffer
+// ─────────────────────────────────────────────
 async function getThumbnailBuffer(url) {
     if (!url) return null;
     try {
-        // URL එකේ අග තියෙන \n අයින් කරනවා
         const cleanUrl = url.trim();
         const { data } = await axios.get(cleanUrl, {
             responseType: "arraybuffer",
@@ -28,7 +56,9 @@ async function getThumbnailBuffer(url) {
     }
 }
 
-// Helper: User ගෙන් Reply එකක් අහන Function එක
+// ─────────────────────────────────────────────
+// Helper 3: Ask user for selection (Reply)
+// ─────────────────────────────────────────────
 async function askSelection(conn, from, mek, headerText, items, footer) {
     let list = `${headerText}\n\n`;
     items.forEach((v, i) => {
@@ -68,7 +98,9 @@ async function askSelection(conn, from, mek, headerText, items, footer) {
     });
 }
 
-// Helper: Document එක යවන Function එක
+// ─────────────────────────────────────────────
+// Helper 4: Send Document
+// ─────────────────────────────────────────────
 async function sendDocument(conn, from, mek, url, title, quality, thumbUrl, footer) {
     const caption = `*${title}*\n\n*Quality:* [${quality}]\n${footer}`;
     try {
@@ -90,7 +122,7 @@ async function sendDocument(conn, from, mek, url, title, quality, thumbUrl, foot
 cmd({
     pattern: "movie",
     alias: ["film", "mv", "tv"],
-    desc: "Search & Download Movies / TV Series",
+    desc: "Search & Download Movies / TV Series (Sinhala Subtitles)",
     category: "download",
     react: "🎬",
     filename: __filename
@@ -98,17 +130,17 @@ cmd({
 
     const query = args.join(" ").trim();
     if (!query) {
-        return reply(`🎬 කරුණාකර Movie එකක් හෝ TV Series එකක් නම දෙන්න!\n\nExample: .movie Banshee${FOOTER}`);
+        return reply(`🎬 කරුණාකර Movie එකක් හෝ TV Series එකක් නම දෙන්න!\n\nExample: .movie Avatar${FOOTER}`);
     }
 
     try {
         await conn.sendMessage(from, { react: { text: "🎬", key: mek.key } });
 
         // ═══════════════════════════════════════
-        // STEP 1: SEARCH (Movie + TV)
+        // STEP 1: SEARCH API
         // ═══════════════════════════════════════
         const searchUrl = `${API_BASE}/api/v1/movies/search?q=${encodeURIComponent(query)}&apikey=${API_KEY}`;
-        const searchRes = await axios.get(searchUrl, { timeout: 30000 });
+        const searchRes = await fetchWithRetry(searchUrl);
 
         if (!searchRes.data?.success || !searchRes.data?.results?.length) {
             return reply(`❌ "${query}" සඳහා කිසිවක් හමු නොවීය.${FOOTER}`);
@@ -127,7 +159,6 @@ cmd({
         );
 
         await conn.sendMessage(from, { react: { text: "📑", key: searchMsg.key } });
-
         const isTV = selected.type === 'tv' || selected.url?.includes('/tvshows/');
 
         // ═══════════════════════════════════════
@@ -136,7 +167,7 @@ cmd({
         const detailEndpoint = isTV ? '/api/v1/tv/details' : '/api/v1/movies/details';
         const detailUrl = `${API_BASE}${detailEndpoint}?url=${encodeURIComponent(selected.url)}&apikey=${API_KEY}`;
         
-        const detailRes = await axios.get(detailUrl, { timeout: 30000 });
+        const detailRes = await fetchWithRetry(detailUrl);
         const movie = detailRes.data?.movie || detailRes.data?.tvShow;
 
         if (!movie) {
@@ -209,7 +240,7 @@ cmd({
                         await conn.sendMessage(from, { text: `⏳ Fetching: ${ep.title}${FOOTER}` }, { quoted: epMsg });
                         
                         const dlUrl = `${API_BASE}/api/v1/tv/episode-links?slug=${ep.slug}&resolve=true&apikey=${API_KEY}`;
-                        const dlRes = await axios.get(dlUrl, { timeout: 60000 });
+                        const dlRes = await fetchWithRetry(dlUrl);
                         const finalUrl = dlRes.data?.link || dlRes.data?.url || dlRes.data?.data?.link;
 
                         if (finalUrl) {
@@ -217,6 +248,7 @@ cmd({
                         }
                     } catch (e) {
                         console.error(`Ep ${i+1} failed:`, e.message);
+                        await conn.sendMessage(from, { text: `❌ Ep ${i+1} failed: ${e.message}${FOOTER}` }, { quoted: epMsg });
                     }
                     // WhatsApp block නොවෙන්න තත්පර 3ක delay එකක්
                     await new Promise(r => setTimeout(r, 3000));
@@ -231,7 +263,7 @@ cmd({
             try {
                 await conn.sendMessage(from, { text: `⏳ *Fetching download link...*${FOOTER}` }, { quoted: epMsg });
                 const dlUrl = `${API_BASE}/api/v1/tv/episode-links?slug=${selectedEp.slug}&resolve=true&apikey=${API_KEY}`;
-                const dlRes = await axios.get(dlUrl, { timeout: 60000 });
+                const dlRes = await fetchWithRetry(dlUrl);
                 const finalUrl = dlRes.data?.link || dlRes.data?.url || dlRes.data?.data?.link;
 
                 if (!finalUrl) throw new Error("NO_LINK");
@@ -245,9 +277,15 @@ cmd({
         } else {
             // ── MOVIE FLOW ──
             const linksUrl = `${API_BASE}/api/v1/movies/download-links?url=${encodeURIComponent(selected.url)}&apikey=${API_KEY}`;
-            const linksRes = await axios.get(linksUrl, { timeout: 30000 });
             
-            const links = linksRes.data?.downloadLinks || linksRes.data?.links || linksRes.data?.results || (Array.isArray(linksRes.data) ? linksRes.data : []);
+            let linksRes;
+            try {
+                linksRes = await fetchWithRetry(linksUrl);
+            } catch (err) {
+                return conn.sendMessage(from, { text: `⚠️ API සර්වර් එක රිස්පොන්ස් කරන්නේ නෑ (502).\n\n⏱️ තව විනාඩියකින් නැවත ට්‍රයි කරන්න, නැත්නම් පොඩි file එකක් (480p) තෝරන්න.${FOOTER}` }, { quoted: searchMsg });
+            }
+            
+            const links = linksRes?.data?.downloadLinks || linksRes?.data?.links || linksRes?.data?.results || (Array.isArray(linksRes?.data) ? linksRes.data : []);
 
             if (!links || links.length === 0) {
                 return conn.sendMessage(from, { text: `❌ Download Links හමු නොවීය.${FOOTER}` }, { quoted: searchMsg });
@@ -280,12 +318,12 @@ cmd({
                 let finalUrl;
                 
                 try {
-                    const resolveRes = await axios.get(resolveUrl, { timeout: 60000 });
+                    const resolveRes = await fetchWithRetry(resolveUrl);
                     finalUrl = resolveRes.data?.link || resolveRes.data?.url || resolveRes.data?.data?.link;
                 } catch (err) {
                     // Resolve fail වුනොත් Instant download try කරනවා
                     const instantUrl = `${API_BASE}/api/v1/movies/download?url=${encodeURIComponent(selectedQuality.link)}&apikey=${API_KEY}`;
-                    const instantRes = await axios.get(instantUrl, { timeout: 60000 });
+                    const instantRes = await fetchWithRetry(instantUrl);
                     finalUrl = instantRes.data?.link || instantRes.data?.url || instantRes.data?.data?.link;
                 }
 
@@ -295,7 +333,7 @@ cmd({
             } catch (e) {
                 let errMsg = `❌ Download failed: ${e.message}`;
                 if (e.message === "NO_LINK") errMsg = "❌ API එකෙන් link එකක් ලැබුනේ නෑ. වෙන quality එකක් try කරන්න.";
-                if (e.message.includes("timeout")) errMsg = "⏱️ Timeout! පොඩි quality එකක් try කරන්න.";
+                if (e.message.includes("timeout") || e.response?.status === 502) errMsg = "⚠️ API සර්වර් එක රිස්පොන්ස් කරන්නේ නෑ (502).\n\n⏱️ තව විනාඩියකින් නැවත ට්‍රයි කරන්න, නැත්නම් පොඩි file එකක් (480p) තෝරන්න.";
                 await conn.sendMessage(from, { text: `${errMsg}${FOOTER}` }, { quoted: qualityMsg });
             } finally {
                 userDownloads.delete(from);
